@@ -73,6 +73,7 @@
   .modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
   .field-label { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:5px; margin-bottom:6px; }
   textarea, .text-input { width:100%; border-radius:10px; padding:10px 12px; background:var(--panel); color:var(--text); border:1px solid var(--border); outline:none; resize:none; margin-bottom:14px; font-size:14px; }
+  .autogrow { overflow-y:hidden; transition:height .1s ease; }
   .img-picker { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
   .img-preview { width:56px; height:56px; border-radius:8px; object-fit:cover; background:var(--panel); flex-shrink:0; }
   .img-pick-btn { font-size:12px; padding:8px 12px; border-radius:8px; background:var(--panel); color:var(--text); border:1px solid var(--border); }
@@ -85,7 +86,9 @@
   .flip-inner:active { transition-duration:.15s; }
   .flip-inner.flipped { transform:rotateY(180deg); }
   .face { position:absolute; inset:0; border-radius:20px; background:var(--card); display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px; backface-visibility:hidden; box-shadow:0 14px 34px rgba(0,0,0,0.38), 0 2px 8px rgba(0,0,0,0.22); transition:box-shadow .6s ease; }
-  .face.back { transform:rotateY(180deg); }
+  .face.back { transform:rotateY(180deg); background:var(--panel2); }
+  .face.back .face-text { color:var(--text); }
+  .face.back .face-label { color:var(--muted); }
   .face-label { position:absolute; top:16px; left:20px; font-size:10px; letter-spacing:2px; color:var(--muted); }
   .face img { width:90px; height:90px; border-radius:10px; object-fit:cover; margin-bottom:14px; }
   .face-text { font-family:'Fraunces',Georgia,serif; font-size:21px; font-weight:600; color:var(--ink); padding:0 8px; }
@@ -185,9 +188,10 @@ const progressCol = collection(db, "progress");
 const statsCol = collection(db, "stats");
 
 // ---------- constants ----------
-const BOX_INTERVAL_DAYS = [0, 0, 1, 3, 7, 14];
+const BOX_INTERVAL_DAYS = [0, 0, 1, 3, 7, 3];
 const MAX_BOX = 5;
-const MASTER_INTERVAL_DAYS = 30;
+const MASTERED_SESSION_CAP = 5;
+const PAUSED_SESSION_KEY = "flashcard-paused-session";
 
 // ---------- helpers ----------
 function todayStr() { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
@@ -303,6 +307,8 @@ async function deleteDeck(deckId, deckName) {
   deckCardIds.forEach((id) => batch.delete(doc(db, "cards", id)));
   progressList.filter((p) => deckCardIds.includes(p.cardId)).forEach((p) => batch.delete(doc(db, "progress", p.id)));
   await batch.commit();
+  const paused = loadPausedSession();
+  if (paused && paused.deckId === deckId) clearPausedSession();
   if (state.activeDeckId === deckId) { state.view = "home"; state.activeDeckId = null; }
   render();
 }
@@ -424,12 +430,28 @@ function deckSupportsMc(deckId, user) {
   const distinctBacks = new Set(dc.map((c) => c.back.trim()));
   return dc.length >= 2 && distinctBacks.size >= 2;
 }
+function dueCardsCapped(pool, user) {
+  const due = pool.filter((c) => isDueProgress(getProgress(c.id, user)));
+  const mastered = due.filter((c) => getProgress(c.id, user).box === MAX_BOX);
+  const others = due.filter((c) => getProgress(c.id, user).box !== MAX_BOX);
+  if (mastered.length > MASTERED_SESSION_CAP) {
+    mastered.sort((a, b) => {
+      const pa = getProgress(a.id, user).nextReview || "";
+      const pb = getProgress(b.id, user).nextReview || "";
+      return pa.localeCompare(pb);
+    });
+    return [...others, ...mastered.slice(0, MASTERED_SESSION_CAP)];
+  }
+  return [...others, ...mastered];
+}
 function startStudy(mode, all) {
   const pool = visibleCards(state.activeDeckId, state.currentUser);
-  let due = all ? pool : pool.filter((c) => isDueProgress(getProgress(c.id, state.currentUser)));
+  let due = all ? pool : dueCardsCapped(pool, state.currentUser);
   if (due.length === 0) due = pool;
   if (due.length === 0) return;
-  state.queue = state.studyOrder === "sequential" ? [...due] : [...due].sort(() => Math.random() - 0.5);
+  state.queue = state.studyOrder === "sequential"
+    ? [...due].sort((a, b) => a.front.localeCompare(b.front, "tr"))
+    : [...due].sort(() => Math.random() - 0.5);
   state.qIndex = 0; state.flipped = false;
   state.sessionCorrect = 0; state.sessionWrong = 0;
   state.studyMode = mode; state.mcSelected = null; state.lastAction = null;
@@ -443,7 +465,57 @@ function advanceQueue() {
   if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[next]);
   render();
 }
+
+// ---------- pause / resume a study session ----------
+function saveSessionSnapshot() {
+  if (state.view !== "study" || !state.queue.length) return;
+  const snap = {
+    deckId: state.activeDeckId, user: state.currentUser, mode: state.studyMode,
+    cardIds: state.queue.map((c) => c.id), qIndex: state.qIndex,
+    sessionCorrect: state.sessionCorrect, sessionWrong: state.sessionWrong, savedAt: Date.now(),
+  };
+  localStorage.setItem(PAUSED_SESSION_KEY, JSON.stringify(snap));
+}
+function loadPausedSession() {
+  try {
+    const raw = localStorage.getItem(PAUSED_SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function clearPausedSession() { localStorage.removeItem(PAUSED_SESSION_KEY); }
+function resumeSession() {
+  const snap = loadPausedSession();
+  if (!snap) return;
+  const restoredQueue = snap.cardIds.map((id) => cards.find((c) => c.id === id)).filter(Boolean);
+  if (restoredQueue.length === 0) { clearPausedSession(); return; }
+  state.queue = restoredQueue;
+  state.qIndex = Math.min(snap.qIndex, restoredQueue.length - 1);
+  state.studyMode = snap.mode;
+  state.sessionCorrect = snap.sessionCorrect || 0;
+  state.sessionWrong = snap.sessionWrong || 0;
+  state.flipped = false; state.mcSelected = null; state.lastAction = null;
+  if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
+  state.view = "study"; render();
+}
+function stopSession() {
+  saveSessionSnapshot();
+  state.view = "deck"; render();
+}
+function deleteStudyCard() {
+  const card = state.queue[state.qIndex];
+  if (!card) return;
+  if (!confirm(`"${card.front}" kartını silmek istiyor musun?`)) return;
+  deleteCard(card.id);
+  state.queue.splice(state.qIndex, 1);
+  state.flipped = false; state.mcSelected = null;
+  if (state.queue.length === 0) { clearPausedSession(); state.view = "deck"; render(); return; }
+  if (state.qIndex >= state.queue.length) state.qIndex = state.queue.length - 1;
+  if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
+  render();
+}
+
 async function finishSession() {
+  clearPausedSession();
   const s = getStats(state.currentUser);
   const today = todayStr();
   const updated = { ...s };
@@ -466,8 +538,9 @@ async function applyReview(card, action) {
 
   let box = cur.box, nextReview, correctDelta = 0, wrongDelta = 0;
   if (action === "wrong") {
-    box = cur.box; // aynı aşamada kalır, düşmez
-    nextReview = new Date().toISOString();
+    box = 2; // her zaman 2. seviyeye iner
+    nextReview = new Date(); nextReview.setDate(nextReview.getDate() + (BOX_INTERVAL_DAYS[2] ?? 1));
+    nextReview = nextReview.toISOString();
     wrongDelta = 1;
   } else if (action === "know") {
     box = Math.min(MAX_BOX, cur.box + 1);
@@ -477,7 +550,8 @@ async function applyReview(card, action) {
     correctDelta = 1;
   } else if (action === "master") {
     box = MAX_BOX;
-    const d = new Date(); d.setDate(d.getDate() + MASTER_INTERVAL_DAYS);
+    const days = BOX_INTERVAL_DAYS[MAX_BOX] ?? 0;
+    const d = new Date(); d.setDate(d.getDate() + days);
     nextReview = d.toISOString();
     correctDelta = 1;
   }
@@ -536,6 +610,8 @@ function render() {
   if (state.showImport) appEl.insertAdjacentHTML("beforeend", renderImportModal());
   if (state.showExport) appEl.insertAdjacentHTML("beforeend", renderExportModal());
 
+  if (state.view === "study") saveSessionSnapshot();
+
   bindEvents();
 }
 
@@ -586,9 +662,10 @@ function renderDeck() {
   const mastered = dc.filter((c) => getProgress(c.id, state.currentUser).box >= MAX_BOX).length;
   const canMc = deckSupportsMc(deck.id, state.currentUser);
 
-  const stageNew = dc.filter((c) => getProgress(c.id, state.currentUser).box === 1);
-  const stageLearning = dc.filter((c) => { const b = getProgress(c.id, state.currentUser).box; return b >= 2 && b < MAX_BOX; });
-  const stageLearned = dc.filter((c) => getProgress(c.id, state.currentUser).box >= MAX_BOX);
+  const byFront = (a, b) => a.front.localeCompare(b.front, "tr");
+  const stageNew = dc.filter((c) => getProgress(c.id, state.currentUser).box === 1).sort(byFront);
+  const stageLearning = dc.filter((c) => { const b = getProgress(c.id, state.currentUser).box; return b >= 2 && b < MAX_BOX; }).sort(byFront);
+  const stageLearned = dc.filter((c) => getProgress(c.id, state.currentUser).box >= MAX_BOX).sort(byFront);
 
   const cardRow = (c) => `
     <div class="card-row">
@@ -603,6 +680,11 @@ function renderDeck() {
       <button class="icon-btn danger" data-delete-card="${c.id}">✕</button>
     </div>`;
 
+  const pausedHere = (() => {
+    const p = loadPausedSession();
+    return p && p.deckId === deck.id && p.user === state.currentUser ? p : null;
+  })();
+
   return `
     <button class="back-link" id="btn-back-home">‹ Destelere dön</button>
     <div class="deck-title-row">
@@ -611,6 +693,7 @@ function renderDeck() {
     </div>
     <p class="muted" style="font-size:14px;margin-bottom:14px;">${dc.length} kart · ${due} tekrar bekliyor · ${mastered} ustalaşıldı (${esc(state.currentUser)})</p>
     ${dc.length > 0 ? renderLearningCurve(dc, state.currentUser) : ""}
+    ${pausedHere ? `<button class="btn btn-gold" id="btn-resume-session" style="margin-bottom:12px;">▶ Kaldığın yerden devam et (${pausedHere.qIndex + 1}/${pausedHere.cardIds.length})</button>` : ""}
     ${dc.length > 0 ? `
       <div class="visibility-toggle">
         <button type="button" class="vis-pill ${state.studyOrder === "shuffled" ? "active" : ""}" data-set-order="shuffled">🔀 Karışık</button>
@@ -641,9 +724,13 @@ function renderStudy() {
   const pct = (state.qIndex / state.queue.length) * 100;
   const header = `
     <div class="top-row" style="margin-bottom:6px;">
-      <button id="btn-exit-study" class="muted" style="background:none;font-size:14px;">✕ Çık</button>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button id="btn-exit-study" class="muted" style="background:none;font-size:14px;">✕ Çık</button>
+        <button id="btn-stop-study" class="muted" style="background:none;font-size:14px;">⏸ Durdur</button>
+      </div>
       <div style="display:flex;align-items:center;gap:12px;">
         <button id="btn-edit-study-card" class="muted" style="background:none;font-size:15px;" title="Bu kartı düzenle">✎</button>
+        <button id="btn-delete-study-card" class="muted" style="background:none;font-size:15px;color:var(--danger);" title="Bu kartı sil">🗑</button>
         <span class="mono muted" style="font-size:12px;">${state.qIndex + 1} / ${state.queue.length} · ${esc(state.currentUser)}</span>
       </div>
     </div>
@@ -654,8 +741,8 @@ function renderStudy() {
       ${header}
       <div class="perspective">
         <div class="flip-inner ${state.flipped ? "flipped" : ""}" id="flip-card">
-          <div class="face front"><span class="face-label">ÖN</span><p class="face-text">${esc(card.front)}</p></div>
-          <div class="face back"><span class="face-label">ARKA</span><p class="face-text">${esc(card.back)}</p></div>
+          <div class="face front"><span class="face-label">SORU</span><p class="face-text">${esc(card.front)}</p></div>
+          <div class="face back"><span class="face-label">CEVAP</span><p class="face-text">${esc(card.back)}</p></div>
         </div>
       </div>
       ${!state.flipped
@@ -770,10 +857,10 @@ function renderCardFormModal() {
           </div>
 
           <label class="field-label">Ön yüz (soru)</label>
-          <textarea id="input-front" rows="2">${esc(state.formFront)}</textarea>
+          <textarea id="input-front" rows="2" class="autogrow">${esc(state.formFront)}</textarea>
 
           <label class="field-label">Arka yüz (cevap)</label>
-          <textarea id="input-back" rows="2" style="margin-bottom:0;">${esc(state.formBack)}</textarea>
+          <textarea id="input-back" rows="2" class="autogrow" style="margin-bottom:0;">${esc(state.formBack)}</textarea>
         </div>
         <div class="modal-footer">
           <button class="btn btn-primary" id="btn-save-card">Kaydet</button>
@@ -857,6 +944,8 @@ function bindEvents() {
   if (btnStudyMc) btnStudyMc.onclick = () => startStudy("mc", false);
   const btnStudyAll = document.getElementById("btn-study-all");
   if (btnStudyAll) btnStudyAll.onclick = () => startStudy("flip", true);
+  const btnResumeSession = document.getElementById("btn-resume-session");
+  if (btnResumeSession) btnResumeSession.onclick = resumeSession;
   document.querySelectorAll("[data-set-order]").forEach((el) => {
     el.onclick = () => { state.studyOrder = el.dataset.setOrder; localStorage.setItem("flashcard-study-order", state.studyOrder); render(); };
   });
@@ -909,13 +998,19 @@ function bindEvents() {
 
   document.querySelectorAll("[data-set-vis]").forEach((el) => { el.onclick = () => { state.formVisibility = el.dataset.setVis; saveLastVisibility(state.formVisibility); render(); }; });
 
+  function autoGrow(el) { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 260) + "px"; }
+
   const inputFront = document.getElementById("input-front");
   if (inputFront) {
-    inputFront.oninput = (e) => { state.formFront = e.target.value; };
+    autoGrow(inputFront);
+    inputFront.oninput = (e) => { state.formFront = e.target.value; autoGrow(inputFront); };
     if (state.focusFrontOnOpen) { inputFront.focus(); state.focusFrontOnOpen = false; }
   }
   const inputBack = document.getElementById("input-back");
-  if (inputBack) inputBack.oninput = (e) => { state.formBack = e.target.value; };
+  if (inputBack) {
+    autoGrow(inputBack);
+    inputBack.oninput = (e) => { state.formBack = e.target.value; autoGrow(inputBack); };
+  }
 
   const btnSaveCard = document.getElementById("btn-save-card");
   if (btnSaveCard) btnSaveCard.onclick = saveCardForm;
@@ -949,6 +1044,10 @@ function bindEvents() {
 
   const btnExitStudy = document.getElementById("btn-exit-study");
   if (btnExitStudy) btnExitStudy.onclick = () => { state.view = "deck"; render(); };
+  const btnStopStudy = document.getElementById("btn-stop-study");
+  if (btnStopStudy) btnStopStudy.onclick = stopSession;
+  const btnDeleteStudyCard = document.getElementById("btn-delete-study-card");
+  if (btnDeleteStudyCard) btnDeleteStudyCard.onclick = deleteStudyCard;
   const btnEditStudyCard = document.getElementById("btn-edit-study-card");
   if (btnEditStudyCard) btnEditStudyCard.onclick = () => {
     const c = state.queue[state.qIndex];
@@ -978,6 +1077,9 @@ function bindEvents() {
   const btnSummaryDone = document.getElementById("btn-summary-done");
   if (btnSummaryDone) btnSummaryDone.onclick = () => { state.view = "deck"; render(); };
 }
+
+document.addEventListener("visibilitychange", () => { if (document.hidden) saveSessionSnapshot(); });
+window.addEventListener("pagehide", saveSessionSnapshot);
 
 render();
 </script>
