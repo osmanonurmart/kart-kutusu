@@ -134,6 +134,15 @@
   .curve-labels { display:flex; gap:8px; margin-top:8px; }
   .curve-label { flex:1; text-align:center; font-size:9.5px; color:var(--muted); }
   .deck-title-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
+  .backup-summary { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:14px; }
+  .backup-summary-line { font-size:13px; font-weight:600; line-height:1.5; }
+  .backup-summary-sub { font-size:11.5px; color:var(--muted); margin-top:4px; }
+  .backup-divider { height:1px; background:var(--border); }
+  .backup-preview { background:var(--panel); border:1px solid var(--success); border-radius:12px; padding:12px 14px; }
+  .backup-preview-title { font-size:11px; letter-spacing:1px; text-transform:uppercase; color:var(--success); font-weight:700; margin-bottom:6px; }
+  .backup-preview-line { font-size:12.5px; color:var(--text); line-height:1.6; }
+  .backup-preview-warn { font-size:12px; color:var(--gold); margin-top:8px; line-height:1.5; }
+  .backup-error { background:rgba(225,87,79,0.14); border:1px solid var(--danger); color:var(--danger); border-radius:10px; padding:10px 12px; font-size:12.5px; line-height:1.5; margin-bottom:12px; }
 </style>
 </head>
 <body>
@@ -224,6 +233,10 @@ const state = {
   showCardForm: false,
   showImport: false,
   showExport: false,
+  showBackup: false,
+  restorePreview: null,   // seçilen yedek dosyasının okunmuş hali
+  restoreError: null,
+  restoreBusy: false,
   importText: "",
   editingCardId: null,
   formFront: "",
@@ -242,9 +255,13 @@ const state = {
   lastAction: null, // for undo
 };
 
-function modalOpen() { return state.showNewDeck || state.showCardForm || state.showImport || state.showExport; }
+function modalOpen() { return state.showNewDeck || state.showCardForm || state.showImport || state.showExport || state.showBackup; }
 let pendingRender = false;
-function maybeRender() { if (modalOpen()) pendingRender = true; else render(); }
+function maybeRender() {
+  // Yedek modalında metin girişi yok; sayılar canlı kalsın diye yeniden çizilebilir.
+  if (state.showBackup && !state.restoreBusy) { render(); return; }
+  if (modalOpen()) pendingRender = true; else render();
+}
 
 // ---------- image resize ----------
 // ---------- progress / stats helpers ----------
@@ -411,11 +428,150 @@ async function runImport() {
   alert(`${pairs.length} kart eklendi.`);
 }
 
+// =========================================================================
+// YEDEK AL / GERİ YÜKLE
+// Tüm Firestore verisini (desteler, kartlar, ilerleme, istatistikler) tek bir
+// JSON dosyasına yazar ve aynı dosyadan geri yükler. Doküman id'leri korunur,
+// böylece ilerleme kayıtları kartlarla eşleşmeye devam eder.
+// =========================================================================
+const BACKUP_FORMAT = "kart-kutusu-backup";
+const BACKUP_VERSION = 1;
+const LAST_BACKUP_KEY = "flashcard-last-backup";
+
+function buildBackup() {
+  return {
+    format: BACKUP_FORMAT,
+    version: BACKUP_VERSION,
+    exportedAt: new Date().toISOString(),
+    projectId: firebaseConfig.projectId,
+    users: USERS,
+    decks, cards,
+    progress: progressList,
+    stats: statsList,
+  };
+}
+
+function downloadBackup() {
+  const data = buildBackup();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `kart-kutusu-yedek-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  try { localStorage.setItem(LAST_BACKUP_KEY, new Date().toISOString()); } catch {}
+  return data;
+}
+
+function lastBackupText() {
+  try {
+    const raw = localStorage.getItem(LAST_BACKUP_KEY);
+    if (!raw) return null;
+    const d = new Date(raw);
+    if (isNaN(d)) return null;
+    return d.toLocaleString("tr-TR", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch { return null; }
+}
+
+// Yedek dosyasını doğrular; sorun varsa hata mesajı döner.
+function validateBackup(data) {
+  if (!data || typeof data !== "object") return "Dosya okunamadı.";
+  if (data.format !== BACKUP_FORMAT) return "Bu bir Kart Kutusu yedek dosyası değil.";
+  for (const key of ["decks", "cards", "progress", "stats"]) {
+    if (!Array.isArray(data[key])) return `Yedek dosyası bozuk: "${key}" listesi yok.`;
+  }
+  const missingId = ["decks", "cards", "progress", "stats"].find((k) => data[k].some((r) => !r || typeof r.id !== "string" || !r.id));
+  if (missingId) return `Yedek dosyası bozuk: "${missingId}" içindeki bazı kayıtların id'si yok.`;
+  return null;
+}
+
+// Kayıtları 400'lük gruplar halinde, id'leri koruyarak geri yazar.
+async function restoreCollection(colName, rows, onProgress) {
+  for (let i = 0; i < rows.length; i += 400) {
+    const batch = writeBatch(db);
+    for (const row of rows.slice(i, i + 400)) {
+      const { id, ...payload } = row;
+      batch.set(doc(db, colName, id), payload, { merge: false });
+    }
+    await batch.commit();
+    if (onProgress) onProgress(Math.min(i + 400, rows.length), rows.length);
+  }
+}
+
+async function runRestore() {
+  const data = state.restorePreview;
+  if (!data || state.restoreBusy) return;
+
+  const total = data.decks.length + data.cards.length + data.progress.length + data.stats.length;
+  if (!confirm(
+    `Yedekteki ${total} kayıt geri yüklenecek.\n\n` +
+    `• Aynı id'ye sahip kayıtların üzerine yedekteki hali yazılır.\n` +
+    `• Şu anda var olup yedekte olmayan hiçbir şey SİLİNMEZ.\n\n` +
+    `Devam etmeden önce mevcut halin bir yedeği bilgisayarına indirilecek.`
+  )) return;
+
+  state.restoreBusy = true; state.restoreError = null; render();
+
+  // Güvenlik ağı: geri yüklemeden önce mevcut halin yedeğini al.
+  try { downloadBackup(); } catch (err) { console.error(err); }
+
+  const btn = document.getElementById("btn-run-restore");
+  const setLabel = (t) => { const b = document.getElementById("btn-run-restore"); if (b) b.textContent = t; };
+  if (btn) btn.disabled = true;
+
+  try {
+    setLabel("Desteler yükleniyor…");
+    await restoreCollection("decks", data.decks);
+    setLabel("Kartlar yükleniyor…");
+    await restoreCollection("cards", data.cards, (done, all) => setLabel(`Kartlar yükleniyor… ${done}/${all}`));
+    setLabel("İlerleme yükleniyor…");
+    await restoreCollection("progress", data.progress, (done, all) => setLabel(`İlerleme yükleniyor… ${done}/${all}`));
+    setLabel("İstatistikler yükleniyor…");
+    await restoreCollection("stats", data.stats);
+
+    state.restoreBusy = false;
+    state.restorePreview = null;
+    state.showBackup = false;
+    pendingRender = false; render();
+    alert(`Geri yükleme tamamlandı. ${total} kayıt geri yüklendi.`);
+  } catch (err) {
+    console.error(err);
+    state.restoreBusy = false;
+    state.restoreError = "Geri yükleme başarısız: " + err.message;
+    render();
+  }
+}
+
+function handleBackupFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let data = null;
+    try { data = JSON.parse(reader.result); }
+    catch { state.restorePreview = null; state.restoreError = "Dosya geçerli bir JSON değil."; render(); return; }
+    const problem = validateBackup(data);
+    if (problem) { state.restorePreview = null; state.restoreError = problem; render(); return; }
+    state.restorePreview = data; state.restoreError = null; render();
+  };
+  reader.onerror = () => { state.restorePreview = null; state.restoreError = "Dosya okunamadı."; render(); };
+  reader.readAsText(file);
+}
+
 // ---------- realtime listeners ----------
-onSnapshot(decksCol, (snap) => { decks = snap.docs.map((d) => ({ id: d.id, ...d.data() })); maybeRender(); }, (e) => console.error(e));
-onSnapshot(cardsCol, (snap) => { cards = snap.docs.map((d) => ({ id: d.id, ...d.data() })); maybeRender(); }, (e) => console.error(e));
-onSnapshot(progressCol, (snap) => { progressList = snap.docs.map((d) => ({ id: d.id, ...d.data() })); maybeRender(); }, (e) => console.error(e));
-onSnapshot(statsCol, (snap) => { statsList = snap.docs.map((d) => ({ id: d.id, ...d.data() })); maybeRender(); }, (e) => console.error(e));
+// Yedek alırken eksik veri yazmamak için her koleksiyonun en az bir kez
+// yüklendiğini takip ediyoruz.
+const loaded = { decks: false, cards: false, progress: false, stats: false };
+function allLoaded() { return loaded.decks && loaded.cards && loaded.progress && loaded.stats; }
+
+onSnapshot(decksCol, (snap) => { decks = snap.docs.map((d) => ({ id: d.id, ...d.data() })); loaded.decks = true; maybeRender(); }, (e) => console.error(e));
+onSnapshot(cardsCol, (snap) => { cards = snap.docs.map((d) => ({ id: d.id, ...d.data() })); loaded.cards = true; maybeRender(); }, (e) => console.error(e));
+onSnapshot(progressCol, (snap) => { progressList = snap.docs.map((d) => ({ id: d.id, ...d.data() })); loaded.progress = true; maybeRender(); }, (e) => console.error(e));
+onSnapshot(statsCol, (snap) => { statsList = snap.docs.map((d) => ({ id: d.id, ...d.data() })); loaded.stats = true; maybeRender(); }, (e) => console.error(e));
 
 // ---------- study session ----------
 function buildMcOptions(card) {
@@ -609,6 +765,7 @@ function render() {
   if (state.showCardForm) appEl.insertAdjacentHTML("beforeend", renderCardFormModal());
   if (state.showImport) appEl.insertAdjacentHTML("beforeend", renderImportModal());
   if (state.showExport) appEl.insertAdjacentHTML("beforeend", renderExportModal());
+  if (state.showBackup) appEl.insertAdjacentHTML("beforeend", renderBackupModal());
 
   if (state.view === "study") saveSessionSnapshot();
 
@@ -633,6 +790,7 @@ function renderHome() {
     <p class="muted" style="font-size:14px;margin-bottom:14px;">${cards.length} kart · ${totalMastered} tanesi ustalaşıldı (${esc(state.currentUser)})</p>
     <div class="nav-row">
       <button class="nav-btn" id="btn-nav-stats">📊 İstatistikler</button>
+      <button class="nav-btn" id="btn-nav-backup">💾 Yedek</button>
     </div>
     <button class="btn btn-primary" id="btn-new-deck" style="margin-bottom:20px;">+ Yeni deste</button>
     ${decks.length === 0 ? `<div class="empty-state">Henüz deste yok. İlk desteni oluştur.</div>` : ""}
@@ -911,6 +1069,64 @@ function renderExportModal() {
     </div>`;
 }
 
+function renderBackupModal() {
+  const ready = allLoaded();
+  const last = lastBackupText();
+  const p = state.restorePreview;
+  const counts = `${decks.length} deste · ${cards.length} kart · ${progressList.length} ilerleme kaydı · ${statsList.length} istatistik`;
+
+  return `
+    <div class="modal-overlay" id="overlay-backup">
+      <div class="modal" id="modal-backup">
+        <div class="modal-body">
+          <div class="modal-head"><h2 style="font-size:18px;">Yedek al / Geri yükle</h2><button id="close-backup" class="muted" style="background:none;">✕</button></div>
+
+          <p class="muted" style="font-size:12.5px;margin-bottom:14px;line-height:1.5;">
+            Tüm verinin — desteler, kartlar, kişi başı ilerleme ve istatistikler — tek bir dosyaya yazılır.
+            Bu dosyayı saklarsan hiçbir şey kaybolmaz.
+          </p>
+
+          <div class="backup-summary">
+            <div class="backup-summary-line">${ready ? esc(counts) : "Veriler yükleniyor…"}</div>
+            <div class="backup-summary-sub">${last ? `Son yedek: ${esc(last)}` : "Henüz yedek almadın."}</div>
+          </div>
+
+          <button class="btn btn-primary" id="btn-download-backup" ${ready ? "" : "disabled"} style="margin-bottom:22px;">
+            ⇩ Yedek dosyasını indir
+          </button>
+
+          <div class="backup-divider"></div>
+
+          <label class="field-label" style="margin-top:16px;">Geri yükle</label>
+          <p class="muted" style="font-size:12.5px;margin-bottom:10px;line-height:1.5;">
+            Daha önce indirdiğin yedek dosyasını seç. Aynı id'li kayıtların üzerine yedekteki hali yazılır;
+            <b>şu anda var olup yedekte olmayan hiçbir şey silinmez.</b>
+          </p>
+
+          <input type="file" id="input-backup-file" accept="application/json,.json" style="display:none;">
+          <button class="btn btn-ghost" id="btn-pick-backup" style="margin-bottom:12px;">📂 Yedek dosyası seç</button>
+
+          ${state.restoreError ? `<div class="backup-error">${esc(state.restoreError)}</div>` : ""}
+
+          ${p ? `
+            <div class="backup-preview">
+              <div class="backup-preview-title">Seçilen yedek</div>
+              <div class="backup-preview-line">${esc(new Date(p.exportedAt).toLocaleString("tr-TR"))}</div>
+              <div class="backup-preview-line">${p.decks.length} deste · ${p.cards.length} kart</div>
+              <div class="backup-preview-line">${p.progress.length} ilerleme kaydı · ${p.stats.length} istatistik</div>
+              ${p.projectId && p.projectId !== firebaseConfig.projectId
+                ? `<div class="backup-preview-warn">⚠ Bu yedek başka bir Firebase projesinden (${esc(p.projectId)}).</div>` : ""}
+            </div>` : ""}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-gold" id="btn-run-restore" ${p && !state.restoreBusy ? "" : "disabled"}>
+            ${state.restoreBusy ? "Geri yükleniyor…" : "Geri yükle"}
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
 // =========================================================================
 // EVENTS
 // =========================================================================
@@ -921,6 +1137,12 @@ function bindEvents() {
 
   const btnNavStats = document.getElementById("btn-nav-stats");
   if (btnNavStats) btnNavStats.onclick = () => { state.view = "stats"; render(); };
+
+  const btnNavBackup = document.getElementById("btn-nav-backup");
+  if (btnNavBackup) btnNavBackup.onclick = () => {
+    state.restorePreview = null; state.restoreError = null; state.restoreBusy = false;
+    state.showBackup = true; render();
+  };
 
   const btnNewDeck = document.getElementById("btn-new-deck");
   if (btnNewDeck) btnNewDeck.onclick = () => { state.showNewDeck = true; render(); };
@@ -1041,6 +1263,31 @@ function bindEvents() {
       document.execCommand("copy");
     }
   };
+
+  // ---- yedek modalı ----
+  const closeBackupModal = () => {
+    if (state.restoreBusy) return;   // geri yükleme sürerken kapatma
+    state.showBackup = false; state.restorePreview = null; state.restoreError = null; render();
+  };
+  const overlayBackup = document.getElementById("overlay-backup");
+  if (overlayBackup) overlayBackup.onclick = (e) => { if (e.target === overlayBackup) closeBackupModal(); };
+  const closeBackup = document.getElementById("close-backup");
+  if (closeBackup) closeBackup.onclick = closeBackupModal;
+
+  const btnDownloadBackup = document.getElementById("btn-download-backup");
+  if (btnDownloadBackup) btnDownloadBackup.onclick = () => {
+    downloadBackup();
+    btnDownloadBackup.textContent = "✓ İndirildi";
+    setTimeout(() => { const b = document.getElementById("btn-download-backup"); if (b) b.textContent = "⇩ Yedek dosyasını indir"; }, 1800);
+  };
+
+  const inputBackupFile = document.getElementById("input-backup-file");
+  const btnPickBackup = document.getElementById("btn-pick-backup");
+  if (btnPickBackup && inputBackupFile) btnPickBackup.onclick = () => inputBackupFile.click();
+  if (inputBackupFile) inputBackupFile.onchange = (e) => handleBackupFile(e.target.files[0]);
+
+  const btnRunRestore = document.getElementById("btn-run-restore");
+  if (btnRunRestore) btnRunRestore.onclick = runRestore;
 
   const btnExitStudy = document.getElementById("btn-exit-study");
   if (btnExitStudy) btnExitStudy.onclick = () => { state.view = "deck"; render(); };
