@@ -150,6 +150,23 @@
   .speak-btn { position:absolute; top:12px; right:12px; background:rgba(18,35,42,0.08); border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; font-size:15px; padding:0; line-height:1; }
   .face.back .speak-btn { background:rgba(233,243,240,0.1); }
   .speak-btn-inline { margin-top:12px; background:rgba(18,35,42,0.07); color:var(--ink); border-radius:999px; padding:6px 14px; font-size:12px; font-weight:600; }
+  .chat-scroll { background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:12px; min-height:220px; max-height:46vh; overflow-y:auto; margin-bottom:16px; }
+  .chat-row { display:flex; margin-bottom:9px; }
+  .chat-row.user { justify-content:flex-end; }
+  .chat-row.assistant { justify-content:flex-start; }
+  .chat-bubble { max-width:82%; padding:10px 13px; border-radius:14px; font-size:14px; line-height:1.5; white-space:pre-wrap; word-break:break-word; }
+  .chat-bubble.user { background:rgba(255,122,89,0.16); border:1px solid rgba(255,122,89,0.4); border-bottom-right-radius:4px; }
+  .chat-bubble.assistant { background:var(--panel2); border:1px solid var(--border); border-bottom-left-radius:4px; }
+  .chat-bubble.live { opacity:0.72; font-style:italic; min-height:20px; }
+  .mic-wrap { text-align:center; padding-bottom:10px; }
+  .mic-btn { width:76px; height:76px; border-radius:50%; font-size:30px; background:var(--panel2); border:2px solid var(--border); color:var(--text); display:inline-flex; align-items:center; justify-content:center; transition:transform .15s ease, background .2s ease, border-color .2s ease; }
+  .mic-btn:active { transform:scale(0.94); }
+  .mic-btn.listening { background:rgba(225,87,79,0.18); border-color:var(--danger); animation:micPulse 1.3s ease-in-out infinite; }
+  .mic-btn.thinking, .mic-btn.replying { background:rgba(242,193,78,0.14); border-color:var(--gold); }
+  .mic-btn.speaking { background:rgba(69,176,140,0.15); border-color:var(--success); }
+  .mic-btn:disabled { opacity:0.75; cursor:default; }
+  @keyframes micPulse { 0%,100% { box-shadow:0 0 0 0 rgba(225,87,79,0.45); } 50% { box-shadow:0 0 0 14px rgba(225,87,79,0); } }
+  @media (prefers-reduced-motion: reduce) { .mic-btn.listening { animation:none; } }
 </style>
 </head>
 <body>
@@ -286,9 +303,16 @@ const state = {
   sessionWrong: 0,
   sessionReviewed: 0, // istatistiğe henüz işlenmemiş tekrar sayısı
   lastAction: null, // for undo
+  // sesli pratik
+  practiceTurns: [],      // [{role, content}]
+  practiceStatus: "idle", // idle | listening | thinking | replying | speaking
+  practiceHeard: "",      // mikrofonun o an duyduğu
+  practiceDraft: "",      // Claude'dan akan cevap
+  practiceError: null,
+  showPracticeSetup: false,
 };
 
-function modalOpen() { return state.showNewDeck || state.showCardForm || state.showImport || state.showExport || state.showBackup; }
+function modalOpen() { return state.showNewDeck || state.showCardForm || state.showImport || state.showExport || state.showBackup || state.showPracticeSetup; }
 let pendingRender = false;
 function maybeRender() {
   // Yedek modalında metin girişi yok; sayılar canlı kalsın diye yeniden çizilebilir.
@@ -347,6 +371,67 @@ function speak(text) {
   } catch (err) { console.warn("Sesli okuma başarısız:", err); }
 }
 const speechSupported = typeof window !== "undefined" && "speechSynthesis" in window;
+
+// ---------- ses tanıma (konuşmayı metne çevirme) ----------
+const SpeechRec = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
+const recognitionSupported = !!SpeechRec;
+let recognition = null;
+
+// Mikrofonu açar. onResult(metin) duyulan cümleyle çağrılır.
+function startListening(lang, onResult, onEnd, onError) {
+  if (!SpeechRec) { onError && onError("Bu tarayıcı ses tanımayı desteklemiyor."); return null; }
+  stopListening();
+  const rec = new SpeechRec();
+  rec.lang = lang;
+  rec.interimResults = true;
+  rec.continuous = false;
+  let finalText = "";
+  rec.onresult = (e) => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) finalText += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    onResult(finalText, interim);
+  };
+  rec.onerror = (e) => {
+    // "aborted" bizim kendi durdurmamız; hata sayma.
+    if (e.error !== "aborted") onError && onError(speechErrorText(e.error));
+  };
+  rec.onend = () => { recognition = null; onEnd && onEnd(finalText.trim()); };
+  recognition = rec;
+  try { rec.start(); } catch (err) { onError && onError(err.message); }
+  return rec;
+}
+function stopListening() {
+  if (recognition) { try { recognition.stop(); } catch {} recognition = null; }
+}
+function speechErrorText(code) {
+  if (code === "not-allowed" || code === "service-not-allowed") return "Mikrofon izni verilmedi. Tarayıcı ayarlarından izin ver.";
+  if (code === "no-speech") return "Ses duyulmadı, tekrar dene.";
+  if (code === "network") return "Ses tanıma için internet gerekiyor.";
+  if (code === "audio-capture") return "Mikrofon bulunamadı.";
+  return "Ses tanıma hatası: " + code;
+}
+
+// Sesli okumanın bitmesini bekleyen sürüm — cevap bitmeden mikrofon açılmasın.
+function speakAsync(text, lang) {
+  return new Promise((resolve) => {
+    if (!speechSupported || !text) { resolve(); return; }
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = lang || guessLang(text);
+      const voice = speechSynthesis.getVoices().find((v) => v.lang === u.lang)
+        || speechSynthesis.getVoices().find((v) => v.lang.startsWith(u.lang.slice(0, 2)));
+      if (voice) u.voice = voice;
+      u.onend = () => resolve();
+      u.onerror = () => resolve();
+      speechSynthesis.speak(u);
+    } catch { resolve(); }
+  });
+}
 
 // ---------- klavye ----------
 // Kısayol ipuçları yalnızca fiziksel klavyesi olan cihazlarda gösterilsin.
@@ -693,6 +778,154 @@ function handleBackupFile(file) {
   reader.readAsText(file);
 }
 
+// =========================================================================
+// SESLİ PRATİK (Claude)
+// Tarayıcı doğrudan Anthropic'e istek atamaz — API anahtarı herkese açık
+// olurdu. İstekler worker/ altındaki Cloudflare Worker'a gider, anahtar
+// orada durur. Kurulum: worker/README.md
+// =========================================================================
+const PRACTICE_URL_KEY = "flashcard-practice-url";
+const PRACTICE_PASS_KEY = "flashcard-practice-pass";
+const PRACTICE_LANG_KEY = "flashcard-practice-lang";
+
+function practiceUrl() { try { return localStorage.getItem(PRACTICE_URL_KEY) || ""; } catch { return ""; } }
+function practicePass() { try { return localStorage.getItem(PRACTICE_PASS_KEY) || ""; } catch { return ""; } }
+function practiceConfigured() { return !!practiceUrl() && !!practicePass(); }
+function savePracticeConfig(url, pass) {
+  try {
+    localStorage.setItem(PRACTICE_URL_KEY, url.trim().replace(/\/+$/, ""));
+    localStorage.setItem(PRACTICE_PASS_KEY, pass);
+  } catch {}
+}
+function practiceLang() { try { return localStorage.getItem(PRACTICE_LANG_KEY) || "en"; } catch { return "en"; } }
+function savePracticeLang(l) { try { localStorage.setItem(PRACTICE_LANG_KEY, l); } catch {} }
+function practiceLangTag() { return practiceLang() === "tr" ? "tr-TR" : "en-US"; }
+
+// Worker'a bir tur gönderir, cevabı parça parça okur.
+// onChunk her yeni metin parçasında çağrılır; tam metin döner.
+async function askClaude(userText, history, onChunk) {
+  const deck = decks.find((d) => d.id === state.activeDeckId);
+  const dc = visibleCards(state.activeDeckId, state.currentUser);
+  const res = await fetch(practiceUrl(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-App-Passphrase": practicePass() },
+    body: JSON.stringify({
+      message: userText,
+      history: history.map((t) => ({ role: t.role, content: t.content })),
+      deckName: deck ? deck.name : "deste",
+      cards: dc.map((c) => ({ front: c.front, back: c.back })),
+      lang: practiceLang(),
+    }),
+  });
+
+  if (!res.ok) {
+    let msg = "Sunucu hatası (" + res.status + ")";
+    try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let full = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const piece = decoder.decode(value, { stream: true });
+    full += piece;
+    onChunk(full);
+  }
+  return full.trim();
+}
+
+function startPractice() {
+  state.practiceTurns = [];
+  state.practiceStatus = "idle";
+  state.practiceError = null;
+  state.practiceHeard = "";
+  state.practiceDraft = "";
+  state.view = "practice";
+  render();
+}
+
+function endPractice() {
+  stopListening();
+  if (speechSupported) { try { speechSynthesis.cancel(); } catch {} }
+  state.practiceStatus = "idle";
+  state.view = "deck";
+  render();
+}
+
+// Mikrofonu aç → duyulanı Claude'a gönder → cevabı seslendir.
+function practiceListen() {
+  if (state.practiceStatus !== "idle") return;
+  state.practiceError = null;
+  state.practiceHeard = "";
+  state.practiceStatus = "listening";
+  render();
+
+  startListening(
+    practiceLangTag(),
+    (finalText, interim) => {
+      state.practiceHeard = (finalText + " " + interim).trim();
+      updatePracticeLive();
+    },
+    (finalText) => {
+      if (!finalText) {
+        state.practiceStatus = "idle";
+        state.practiceHeard = "";
+        render();
+        return;
+      }
+      practiceSend(finalText);
+    },
+    (msg) => {
+      state.practiceError = msg;
+      state.practiceStatus = "idle";
+      render();
+    }
+  );
+}
+
+async function practiceSend(userText) {
+  // Geçmiş, bu mesaj eklenmeden önceki hali olmalı — yoksa kullanıcının
+  // cümlesi Claude'a hem `history` hem `message` içinde iki kez gider.
+  const history = state.practiceTurns.slice();
+  state.practiceTurns.push({ role: "user", content: userText });
+  state.practiceHeard = "";
+  state.practiceDraft = "";
+  state.practiceStatus = "thinking";
+  render();
+
+  try {
+    const reply = await askClaude(userText, history, (partial) => {
+      state.practiceDraft = partial;
+      if (state.practiceStatus === "thinking") { state.practiceStatus = "replying"; render(); }
+      else updatePracticeLive();
+    });
+    state.practiceDraft = "";
+    state.practiceTurns.push({ role: "assistant", content: reply });
+    state.practiceStatus = "speaking";
+    render();
+    await speakAsync(reply, practiceLangTag());
+    // Kullanıcı bu sırada ekrandan çıkmış olabilir.
+    if (state.view === "practice") { state.practiceStatus = "idle"; render(); }
+  } catch (err) {
+    state.practiceDraft = "";
+    state.practiceError = err.message;
+    state.practiceStatus = "idle";
+    render();
+  }
+}
+
+// Akış sırasında tüm ekranı yeniden çizmemek için yalnızca canlı balonu güncelle.
+function updatePracticeLive() {
+  const el = document.getElementById("practice-live");
+  if (!el) { render(); return; }
+  el.textContent = state.practiceStatus === "listening" ? state.practiceHeard : state.practiceDraft;
+  const scroller = document.getElementById("practice-scroll");
+  if (scroller) scroller.scrollTop = scroller.scrollHeight;
+}
+
 // ---------- realtime listeners ----------
 // Yedek alırken eksik veri yazmamak için her koleksiyonun en az bir kez
 // yüklendiğini takip ediyoruz.
@@ -916,12 +1149,14 @@ function render() {
   else if (state.view === "study") appEl.innerHTML = renderStudy();
   else if (state.view === "summary") appEl.innerHTML = renderSummary();
   else if (state.view === "stats") appEl.innerHTML = renderStats();
+  else if (state.view === "practice") appEl.innerHTML = renderPractice();
 
   if (state.showNewDeck) appEl.insertAdjacentHTML("beforeend", renderNewDeckModal());
   if (state.showCardForm) appEl.insertAdjacentHTML("beforeend", renderCardFormModal());
   if (state.showImport) appEl.insertAdjacentHTML("beforeend", renderImportModal());
   if (state.showExport) appEl.insertAdjacentHTML("beforeend", renderExportModal());
   if (state.showBackup) appEl.insertAdjacentHTML("beforeend", renderBackupModal());
+  if (state.showPracticeSetup) appEl.insertAdjacentHTML("beforeend", renderPracticeSetupModal());
 
   if (state.view === "study") saveSessionSnapshot();
   if (state.view === "deck") applyCardSearch();
@@ -1021,6 +1256,7 @@ function renderDeck() {
       </div>
       ${!canMc ? `<p class="muted" style="font-size:12px;margin-bottom:14px;">Çoktan seçmeli için en az 2 farklı cevaplı kart gerekir.</p>` : ""}
       ${due === 0 ? `<button id="btn-study-all" class="muted" style="background:none;font-size:12px;text-decoration:underline;width:100%;margin-bottom:18px;">Tekrar zamanı gelmedi — yine de hepsini çalış</button>` : ""}
+      <button class="btn btn-ghost" id="btn-practice" style="margin-bottom:14px;">🎙 Claude ile sesli pratik</button>
     ` : ""}
     <div class="grid-2" style="margin-bottom:18px;">
       <button class="btn btn-outline" id="btn-add-card">+ Kart ekle</button>
@@ -1351,6 +1587,88 @@ function renderBackupModal() {
     </div>`;
 }
 
+function renderPractice() {
+  const deck = decks.find((d) => d.id === state.activeDeckId);
+  const st = state.practiceStatus;
+  const statusText = {
+    idle: "Konuşmak için mikrofona dokun",
+    listening: "Dinliyorum…",
+    thinking: "Claude düşünüyor…",
+    replying: "Claude yazıyor…",
+    speaking: "Claude konuşuyor…",
+  }[st];
+
+  const bubbles = state.practiceTurns.map((t) => `
+    <div class="chat-row ${t.role}">
+      <div class="chat-bubble ${t.role}">${esc(t.content)}</div>
+    </div>`).join("");
+
+  // Dinlerken duyulanı, cevap akarken gelen metni aynı canlı balonda göster.
+  const liveText = st === "listening" ? state.practiceHeard : state.practiceDraft;
+  const live = (st === "listening" || st === "replying") ? `
+    <div class="chat-row ${st === "listening" ? "user" : "assistant"}">
+      <div class="chat-bubble ${st === "listening" ? "user" : "assistant"} live" id="practice-live">${esc(liveText)}</div>
+    </div>` : "";
+
+  const busy = st !== "idle";
+
+  return `
+    <div class="top-row" style="margin-bottom:10px;">
+      <button id="btn-practice-exit" class="muted" style="background:none;font-size:14px;">‹ Desteye dön</button>
+      <button id="btn-practice-settings" class="muted" style="background:none;font-size:15px;" title="Ayarlar">⚙</button>
+    </div>
+    <h1 style="font-size:20px;margin-bottom:2px;">Sesli pratik</h1>
+    <p class="muted" style="font-size:12.5px;margin-bottom:12px;">${esc(deck ? deck.name : "")} · ${practiceLang() === "tr" ? "Türkçe" : "İngilizce"}</p>
+
+    <div class="visibility-toggle">
+      <button type="button" class="vis-pill ${practiceLang() === "en" ? "active" : ""}" data-practice-lang="en" ${busy ? "disabled" : ""}>🇬🇧 İngilizce</button>
+      <button type="button" class="vis-pill ${practiceLang() === "tr" ? "active" : ""}" data-practice-lang="tr" ${busy ? "disabled" : ""}>🇹🇷 Türkçe</button>
+    </div>
+
+    ${state.practiceError ? `<div class="backup-error">${esc(state.practiceError)}</div>` : ""}
+
+    <div class="chat-scroll" id="practice-scroll">
+      ${state.practiceTurns.length === 0 && !live
+        ? `<div class="empty-state" style="padding:26px 0;">Mikrofona dokun ve destedeki kelimelerle sohbete başla.</div>`
+        : bubbles + live}
+    </div>
+
+    <div class="mic-wrap">
+      <button class="mic-btn ${st}" id="btn-mic" ${st === "idle" || st === "listening" ? "" : "disabled"}>
+        ${st === "listening" ? "⏹" : "🎙"}
+      </button>
+      <p class="hint" style="margin-top:10px;">${esc(statusText)}</p>
+    </div>`;
+}
+
+function renderPracticeSetupModal() {
+  return `
+    <div class="modal-overlay" id="overlay-practice-setup">
+      <div class="modal" id="modal-practice-setup">
+        <div class="modal-body">
+          <div class="modal-head"><h2 style="font-size:18px;">Sesli pratik kurulumu</h2><button id="close-practice-setup" class="muted" style="background:none;">✕</button></div>
+          <p class="muted" style="font-size:12.5px;margin-bottom:14px;line-height:1.55;">
+            Sesli pratik, Claude'a bağlanan küçük bir sunucu gerektirir — API anahtarı
+            tarayıcıya konamaz. Kurulum adımları depodaki <b>worker/README.md</b> dosyasında.
+            Kurduktan sonra aldığın adresi ve belirlediğin parolayı buraya yaz.
+          </p>
+
+          <label class="field-label">Sunucu adresi</label>
+          <input type="url" id="input-practice-url" class="text-input" placeholder="https://kart-kutusu.xxx.workers.dev" value="${esc(practiceUrl())}">
+
+          <label class="field-label">Parola</label>
+          <input type="password" id="input-practice-pass" class="text-input" placeholder="Worker'a verdiğin parola" value="${esc(practicePass())}" style="margin-bottom:0;">
+          <p class="muted" style="font-size:11.5px;margin-top:8px;line-height:1.5;">
+            Bu ikisi yalnızca bu tarayıcıda saklanır, depoya girmez.
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" id="btn-save-practice-setup">Kaydet</button>
+        </div>
+      </div>
+    </div>`;
+}
+
 // =========================================================================
 // EVENTS
 // =========================================================================
@@ -1552,6 +1870,51 @@ function bindEvents() {
 
   const btnRunRestore = document.getElementById("btn-run-restore");
   if (btnRunRestore) btnRunRestore.onclick = runRestore;
+
+  // ---- sesli pratik ----
+  const btnPractice = document.getElementById("btn-practice");
+  if (btnPractice) btnPractice.onclick = () => {
+    if (!recognitionSupported) {
+      alert("Bu tarayıcı ses tanımayı desteklemiyor.\n\nAndroid'de Chrome, iPhone'da Safari dene.");
+      return;
+    }
+    // Sunucu henüz tanımlı değilse önce kurulum penceresini aç.
+    if (!practiceConfigured()) { state.showPracticeSetup = true; render(); return; }
+    startPractice();
+  };
+
+  const btnPracticeExit = document.getElementById("btn-practice-exit");
+  if (btnPracticeExit) btnPracticeExit.onclick = endPractice;
+
+  const btnPracticeSettings = document.getElementById("btn-practice-settings");
+  if (btnPracticeSettings) btnPracticeSettings.onclick = () => { state.showPracticeSetup = true; render(); };
+
+  const btnMic = document.getElementById("btn-mic");
+  if (btnMic) btnMic.onclick = () => {
+    if (state.practiceStatus === "listening") stopListening();
+    else practiceListen();
+  };
+
+  document.querySelectorAll("[data-practice-lang]").forEach((el) => {
+    el.onclick = () => { savePracticeLang(el.dataset.practiceLang); render(); };
+  });
+
+  const overlayPracticeSetup = document.getElementById("overlay-practice-setup");
+  const closePracticeSetup = () => { state.showPracticeSetup = false; pendingRender = false; render(); };
+  if (overlayPracticeSetup) overlayPracticeSetup.onclick = (e) => { if (e.target === overlayPracticeSetup) closePracticeSetup(); };
+  const closePracticeSetupBtn = document.getElementById("close-practice-setup");
+  if (closePracticeSetupBtn) closePracticeSetupBtn.onclick = closePracticeSetup;
+
+  const btnSavePracticeSetup = document.getElementById("btn-save-practice-setup");
+  if (btnSavePracticeSetup) btnSavePracticeSetup.onclick = () => {
+    const url = (document.getElementById("input-practice-url") || {}).value || "";
+    const pass = (document.getElementById("input-practice-pass") || {}).value || "";
+    if (!url.trim() || !pass) { alert("Adres ve parola gerekli."); return; }
+    savePracticeConfig(url, pass);
+    state.showPracticeSetup = false;
+    pendingRender = false;
+    if (state.view === "practice") render(); else startPractice();
+  };
 
   const btnExitStudy = document.getElementById("btn-exit-study");
   if (btnExitStudy) btnExitStudy.onclick = () => { commitSessionStats(); state.view = "deck"; render(); };

@@ -33,6 +33,18 @@ dosyasına indirir ve aynı dosyadan geri yükler. Geri yükleme yıkıcı
 değildir: aynı id'li kayıtların üzerine yazılır, yedekte olmayan hiçbir
 kayıt silinmez. Geri yüklemeden önce mevcut halin yedeği otomatik iner.
 
+## Sesli pratik (Claude)
+
+Bir destede **🎙 Claude ile sesli pratik**: mikrofona konuşursun, Claude
+destedeki kelimeler üzerinden sohbet eder ve cevabı yüksek sesle okunur.
+
+Bu özellik `worker/` altındaki küçük bir Cloudflare Worker'a ihtiyaç duyar —
+Anthropic API anahtarı tarayıcıya konamaz, çünkü `index.html` herkese açık.
+Kurulum adımları **`worker/README.md`** dosyasında. Kurulmadan uygulamanın
+geri kalanı normal çalışır; yalnızca bu buton kurulum penceresi açar.
+
+Ses tanıma Chrome, Edge ve Safari'de çalışır; Firefox'ta çalışmaz.
+
 ## Firestore kuralları
 
 Güvenlik kuralları `firestore.rules` dosyasında. Firebase konsolunda

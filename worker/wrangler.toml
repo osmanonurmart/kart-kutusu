@@ -1,0 +1,12 @@
+name = "kart-kutusu"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Uygulamanın hangi adresten çağrılabileceği. Kendi adresini yaz.
+# Birden fazlaysa virgülle ayır.
+ALLOWED_ORIGINS = "https://osmanonurmart.github.io"
+
+# ANTHROPIC_API_KEY ve APP_PASSPHRASE buraya YAZILMAZ — bu dosya depoda.
+# Onlar `wrangler secret put` ile ayrıca verilir (README'ye bak).
