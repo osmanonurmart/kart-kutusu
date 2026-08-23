@@ -26,6 +26,36 @@ mevcut kayıtları sahipsiz bırakır ve ayrıca bir taşıma gerektirir:
 - Koleksiyon adları veya `progressKey()` şeması
 - Alan adları: `front`, `back`, `deckId`, `visibility`, `box`, `nextReview`
 
+## Dışa / içe aktarma ve seviyeler
+
+Bir destede **⇩ Dışa aktar** her satırın sonuna iki kullanıcının kutu
+seviyesini de yazar:
+
+```
+elma - apple - 1.2 - 2.4
+armut - pear - 1.5 - 2.1
+```
+
+`1.2` = 1. kullanıcı (`USERS[0]`) 2. kutuda, `2.4` = 2. kullanıcı 4. kutuda.
+
+Bu metinle uygulama dışında (ör. başka bir yapay zeka ile) çalıştıktan sonra
+**bildiğin kartların seviyesinin sonuna `+` koy** ve geri içe aktar:
+
+```
+elma - apple - 1.2+ - 2.4
+```
+
+İçe aktarmada `+` işaretli her kullanıcının kutusu bir üste çıkar, tekrar
+tarihi yeni kutuya göre ileri alınır.
+
+**Önemli:** `+` konmayan sayılar yalnızca bilgi amaçlıdır, içe aktarmada
+**dikkate alınmaz**. Sayıyı elle değiştirmenin bir etkisi olmaz — ilerlemeyi
+değiştiren tek şey `+` işaretidir. Bu sayede yanlışlıkla seviye sıfırlamak
+mümkün değildir.
+
+Seviye alanı olmayan eski biçimdeki metinler (`elma - apple`) eskisi gibi
+çalışmaya devam eder.
+
 ## Yedekleme
 
 Ana ekrandaki **💾 Yedek** butonu tüm Firestore verisini tek bir JSON

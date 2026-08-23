@@ -573,25 +573,70 @@ async function deleteCard(cardId) {
 }
 
 // ---------- import ----------
+// Satır sonundaki seviye alanı: "1.3" -> 1. kullanıcı 3. kutuda.
+// Sonuna "+" gelirse (1.3+) içe aktarmada o kullanıcının kutusu 1 artırılır.
+const LEVEL_TOKEN = /^(\d+)\.(\d+)(\+?)$/;
+
+// Bir parçanın gerçekten seviye alanı olup olmadığını söyler.
+// Sadece kalıba bakmak yetmez: "pi - 3.14" gibi bir kartın arka yüzü de
+// kalıba uyar. Kullanıcı indeksi ve kutu numarası geçerli aralıkta olmalı.
+function parseLevelToken(part) {
+  const m = LEVEL_TOKEN.exec((part || "").trim());
+  if (!m) return null;
+  const userIndex = Number(m[1]);
+  const box = Number(m[2]);
+  if (userIndex < 1 || userIndex > USERS.length) return null;
+  if (box < 1 || box > MAX_BOX) return null;
+  return { user: USERS[userIndex - 1], box, bump: m[3] === "+" };
+}
+
+// Satırın sonundan en fazla USERS.length kadar seviye alanını soyar.
+// Geriye kalan metni ve "+" işaretli kullanıcı adlarını döndürür.
+function stripLevels(parts) {
+  const bumps = [];
+  const rest = parts.slice();
+  // Sayaç soyulan parça sayısını tutmalı — bumps yalnızca "+" işaretlilerde
+  // büyüdüğü için onu sınır olarak kullanmak işaretsiz seviyelerde sınırı
+  // tamamen devre dışı bırakırdı.
+  let stripped = 0;
+  while (rest.length > 2 && stripped < USERS.length) {
+    const level = parseLevelToken(rest[rest.length - 1]);
+    if (!level) break;
+    rest.pop();
+    stripped++;
+    if (level.bump) bumps.unshift(level.user);
+  }
+  return { rest, bumps };
+}
+
 function parseImportText(text) {
   const lines = text.split("\n");
   const pairs = [];
   for (const raw of lines) {
     const line = raw.replace(/\r$/, "");
     if (!line.trim()) continue;
-    let front, back;
+
+    let front, back, bumps = [];
     if (line.includes("\t")) {
-      const parts = line.split("\t");
-      front = parts[0]; back = parts.slice(1).join(" ");
+      const stripped = stripLevels(line.split("\t"));
+      bumps = stripped.bumps;
+      front = stripped.rest[0]; back = stripped.rest.slice(1).join(" ");
     } else if (line.includes(" - ")) {
-      const idx = line.indexOf(" - ");
-      front = line.slice(0, idx); back = line.slice(idx + 3);
+      // Ön/arka yüz İLK ayırıcıdan bölünmeye devam ediyor (kart metninde
+      // tire olabilir); seviyeler yalnızca sondan soyuluyor.
+      const stripped = stripLevels(line.split(" - "));
+      bumps = stripped.bumps;
+      const remainder = stripped.rest.join(" - ");
+      const idx = remainder.indexOf(" - ");
+      if (idx === -1) continue;
+      front = remainder.slice(0, idx); back = remainder.slice(idx + 3);
     } else if (line.includes("-")) {
       const idx = line.indexOf("-");
       front = line.slice(0, idx); back = line.slice(idx + 1);
     } else continue;
-    front = front.trim(); back = back.trim();
-    if (front && back) pairs.push({ front, back });
+
+    front = (front || "").trim(); back = (back || "").trim();
+    if (front && back) pairs.push({ front, back, bumps });
   }
   return pairs;
 }
@@ -600,48 +645,98 @@ function cardKey(front, back) {
   return `${(front || "").trim().toLocaleLowerCase("tr")}\u001f${(back || "").trim().toLocaleLowerCase("tr")}`;
 }
 
+// İçe aktarma öncesi özet — hem onay penceresinde hem de sonuç mesajında
+// aynı sayıları kullanmak için tek yerden hesaplanır.
+function summarizeImport(parsed) {
+  const deckCards = cards.filter((c) => c.deckId === state.activeDeckId);
+  const existing = new Map(deckCards.map((c) => [cardKey(c.front, c.back), c]));
+  const seen = new Set(existing.keys());
+  const fresh = [];
+  let duplicates = 0;
+  let bumpCount = 0;
+
+  for (const row of parsed) {
+    const key = cardKey(row.front, row.back);
+    if (seen.has(key)) duplicates++;
+    else { seen.add(key); fresh.push(row); }
+    bumpCount += row.bumps.length;
+  }
+  return { fresh, duplicates, bumpCount, existing };
+}
+
+// "+" işaretli satırlar için ilerlemeyi bir kutu yukarı taşır.
+// newCardIds: bu içe aktarmada oluşturulan kartların anahtar -> id eşlemesi.
+async function applyImportBumps(parsed, existing, newCardIds) {
+  // Aynı satır iki kez yapıştırılmışsa tek yazma yeterli — hem sayaç dürüst
+  // kalır hem de kutu yanlışlıkla iki kez artmış gibi raporlanmaz.
+  const writes = new Map();
+  for (const row of parsed) {
+    if (!row.bumps.length) continue;
+    const key = cardKey(row.front, row.back);
+    const card = existing.get(key);
+    const cardId = card ? card.id : newCardIds.get(key);
+    if (!cardId) continue;
+
+    for (const user of row.bumps) {
+      const progKey = progressKey(user, cardId);
+      const cur = progressList.find((p) => p.id === progKey);
+      const box = Math.min(MAX_BOX, (cur && cur.box ? cur.box : 1) + 1);
+      const days = BOX_INTERVAL_DAYS[box] ?? 0;
+      const d = new Date(); d.setDate(d.getDate() + days);
+      if (writes.has(progKey)) continue;
+      writes.set(progKey, {
+        box,
+        nextReview: days === 0 ? new Date().toISOString() : d.toISOString(),
+        correctCount: (cur && cur.correctCount) || 0,
+        wrongCount: (cur && cur.wrongCount) || 0,
+        user, cardId, deckId: state.activeDeckId, updatedAt: Date.now(),
+      });
+    }
+  }
+
+  const entries = [...writes.entries()];
+  for (let i = 0; i < entries.length; i += 400) {
+    const batch = writeBatch(db);
+    for (const [key, payload] of entries.slice(i, i + 400)) {
+      batch.set(doc(db, "progress", key), payload, { merge: false });
+    }
+    await batch.commit();
+  }
+  return entries.length;
+}
+
 async function runImport() {
   const parsed = parseImportText(state.importText);
   if (parsed.length === 0) return;
 
-  // Hem destede zaten var olanları hem de yapıştırılan metnin kendi içindeki
-  // tekrarları ele.
-  const seen = new Set(cards.filter((c) => c.deckId === state.activeDeckId).map((c) => cardKey(c.front, c.back)));
-  const pairs = [];
-  let skipped = 0;
-  for (const pair of parsed) {
-    const key = cardKey(pair.front, pair.back);
-    if (seen.has(key)) { skipped++; continue; }
-    seen.add(key);
-    pairs.push(pair);
-  }
+  const { fresh, duplicates, existing } = summarizeImport(parsed);
 
-  if (pairs.length === 0) {
-    alert(`Eklenecek yeni kart yok — ${skipped} kartın hepsi zaten bu destede var.`);
-    state.showImport = false; state.importText = "";
-    pendingRender = false; render();
-    return;
-  }
-
-  const chunks = [];
-  for (let i = 0; i < pairs.length; i += 400) chunks.push(pairs.slice(i, i + 400));
-  for (const chunk of chunks) {
+  // Yeni kartlar. Seviye artırmada id gerektiği için id'ler önceden üretilir.
+  const newCardIds = new Map();
+  for (let i = 0; i < fresh.length; i += 400) {
     const batch = writeBatch(db);
-    chunk.forEach((pair) => {
+    for (const row of fresh.slice(i, i + 400)) {
       const ref = doc(cardsCol);
+      newCardIds.set(cardKey(row.front, row.back), ref.id);
       batch.set(ref, {
-        deckId: state.activeDeckId, front: pair.front, back: pair.back,
+        deckId: state.activeDeckId, front: row.front, back: row.back,
         visibility: "both",
         createdBy: state.currentUser, createdAt: Date.now(),
       });
-    });
+    }
     await batch.commit();
   }
+
+  const bumped = await applyImportBumps(parsed, existing, newCardIds);
+
   state.showImport = false; state.importText = "";
   pendingRender = false; render();
-  alert(skipped > 0
-    ? `${pairs.length} kart eklendi. ${skipped} kart zaten bu destede olduğu için atlandı.`
-    : `${pairs.length} kart eklendi.`);
+
+  const parts = [];
+  parts.push(fresh.length > 0 ? `${fresh.length} kart eklendi.` : "Yeni kart eklenmedi.");
+  if (duplicates > 0) parts.push(`${duplicates} kart zaten bu destede vardı, yeniden eklenmedi — seviyeleri yine de uygulandı.`);
+  parts.push(bumped > 0 ? `${bumped} seviye bir kutu yükseltildi.` : "Hiçbir seviye değişmedi (+ işareti yok).");
+  alert(parts.join("\n"));
 }
 
 // =========================================================================
@@ -1488,21 +1583,26 @@ function renderCardFormModal() {
 }
 
 function renderImportModal() {
-  const pairs = parseImportText(state.importText);
+  const parsed = parseImportText(state.importText);
+  const { fresh, duplicates, bumpCount } = summarizeImport(parsed);
   return `
     <div class="modal-overlay" id="overlay-import">
       <div class="modal" id="modal-import">
         <div class="modal-body">
           <div class="modal-head"><h2 style="font-size:18px;">İçe aktar</h2><button id="close-import" class="muted" style="background:none;">✕</button></div>
           <p class="muted" style="font-size:12.5px;margin-bottom:10px;line-height:1.5;">
-            Her satıra bir kart: <b>Ön - Arka</b> şeklinde yaz.<br>
-            Ya da Excel'de iki bitişik sütunu seçip kopyala, buraya yapıştır.
+            Her satıra bir kart: <b>Ön - Arka</b>. Excel'den iki sütun da yapıştırabilirsin.<br>
+            Satır sonuna seviye yazabilirsin: <code>Elma - Apple - 1.2 - 2.4</code>
+            (${USERS.map((u, i) => `${i + 1}=${esc(u)}`).join(", ")}).
+            Seviyenin sonundaki <code>+</code> o kullanıcının kutusunu bir artırır.
           </p>
-          <textarea id="input-import" rows="8" placeholder="Elma - Apple&#10;Armut - Pear" style="margin-bottom:0;">${esc(state.importText)}</textarea>
-          <p class="import-count">${pairs.length} kart bulunacak</p>
+          <textarea id="input-import" rows="8" placeholder="Elma - Apple&#10;Armut - Pear - 1.3+ - 2.1" style="margin-bottom:0;">${esc(state.importText)}</textarea>
+          <p class="import-count">
+            ${fresh.length} yeni kart${duplicates > 0 ? ` · ${duplicates} zaten var` : ""}${bumpCount > 0 ? ` · ${bumpCount} seviye artışı` : ""}
+          </p>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-primary" id="btn-run-import" ${pairs.length === 0 ? "disabled" : ""}>İçe Aktar</button>
+          <button class="btn btn-primary" id="btn-run-import" ${parsed.length === 0 ? "disabled" : ""}>İçe Aktar</button>
         </div>
       </div>
     </div>`;
@@ -1511,14 +1611,26 @@ function renderImportModal() {
 function renderExportModal() {
   const deck = decks.find((d) => d.id === state.activeDeckId);
   const dc = deck ? visibleCards(deck.id, state.currentUser) : [];
-  const text = dc.map((c) => `${c.front} - ${c.back}`).join("\n");
+  // Her kullanıcının kutu seviyesi satır sonuna eklenir: "1.2 - 2.4".
+  const text = dc.map((c) => {
+    const levels = USERS.map((u, i) => `${i + 1}.${getProgress(c.id, u).box}`).join(" - ");
+    return `${c.front} - ${c.back} - ${levels}`;
+  }).join("\n");
   return `
     <div class="modal-overlay" id="overlay-export">
       <div class="modal" id="modal-export">
         <div class="modal-body">
           <div class="modal-head"><h2 style="font-size:18px;">Dışa aktar</h2><button id="close-export" class="muted" style="background:none;">✕</button></div>
           <p class="muted" style="font-size:12.5px;margin-bottom:10px;line-height:1.5;">
-            ${dc.length} kart, içe aktarma ile aynı formatta (<b>Ön - Arka</b>). Kopyala, istediğin yere yapıştır — başka bir deste veya arkadaşınla paylaşmak için de kullanabilirsin.
+            ${dc.length} kart. Her satırın sonundaki sayılar kutu seviyesi:
+            <b>${USERS.map((u, i) => `${i + 1}=${esc(u)}`).join(", ")}</b>.
+            Örneğin <code>1.2</code> → ${esc(USERS[0])} 2. kutuda.
+          </p>
+          <p class="muted" style="font-size:12.5px;margin-bottom:10px;line-height:1.5;background:rgba(242,193,78,0.1);border-left:2px solid var(--gold);padding:8px 10px;border-radius:6px;">
+            Bu metinle başka bir yerde çalıştıktan sonra <b>bildiğin kartların
+            seviyesinin sonuna <code>+</code> koy</b> (ör. <code>1.2+</code>) ve geri içe aktar —
+            o kartların kutusu bir üste çıkar. <b>+ konmayan sayılar hiçbir şeyi
+            değiştirmez</b>, sayıyı elle düzenlemenin bir etkisi olmaz.
           </p>
           <textarea id="export-text" rows="10" readonly style="margin-bottom:0;">${esc(text)}</textarea>
         </div>
