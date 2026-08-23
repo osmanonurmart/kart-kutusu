@@ -1,0 +1,45 @@
+// =============================================================================
+// Kart Kutusu — Firestore güvenlik kuralları
+// =============================================================================
+//
+// NASIL UYGULANIR
+//   1. https://console.firebase.google.com adresinde `flashcard-69447` projesini aç
+//   2. Build → Firestore Database → Rules sekmesi
+//   3. Oradaki metnin tamamını silip aşağıdakini yapıştır
+//   4. "Publish" / "Yayınla"
+//
+// NEDEN GEREKLİ
+//   Proje "test mode" ile kurulmuştu. Test mode kuralı şuna benzer:
+//
+//       allow read, write: if request.time < timestamp.date(2025, 9, 20);
+//
+//   Bu tarih geçtiğinde kural artık hiçbir isteğe izin vermez; uygulama
+//   veriyi okuyamaz ve boş açılır. VERİ SİLİNMEZ — sadece erişim kapanır.
+//   Aşağıdaki kuralın son kullanma tarihi yoktur, yani bu sorun bir daha
+//   yaşanmaz.
+//
+// DİKKAT — BU KURAL VERİTABANINI HERKESE AÇIK BIRAKIR
+//   Bağlantıyı bilen herkes kartları okuyabilir, değiştirebilir ve silebilir.
+//   Şu anki durum da zaten böyle; bu kural mevcut erişimi aynen korur,
+//   sadece süre dolmasını engeller.
+//
+//   Bunu kapatmak istersen yapılması gereken, uygulamaya Firebase Auth ile
+//   giriş eklemek ve buradaki koşulu `if request.auth != null;` yapmaktır.
+//
+// =============================================================================
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Uygulamanın kullandığı dört koleksiyon.
+    match /decks/{deckId}    { allow read, write: if true; }
+    match /cards/{cardId}    { allow read, write: if true; }
+    match /progress/{progId} { allow read, write: if true; }
+    match /stats/{user}      { allow read, write: if true; }
+
+    // Yukarıdakiler dışında hiçbir yola izin verilmez.
+    match /{document=**} { allow read, write: if false; }
+  }
+}

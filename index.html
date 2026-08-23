@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Kart Kutusu</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
 <style>
@@ -143,6 +143,13 @@
   .backup-preview-line { font-size:12.5px; color:var(--text); line-height:1.6; }
   .backup-preview-warn { font-size:12px; color:var(--gold); margin-top:8px; line-height:1.5; }
   .backup-error { background:rgba(225,87,79,0.14); border:1px solid var(--danger); color:var(--danger); border-radius:10px; padding:10px 12px; font-size:12.5px; line-height:1.5; margin-bottom:12px; }
+  .search-wrap { margin:18px 0 4px; }
+  .search-wrap input { margin-bottom:0; }
+  .search-wrap input::-webkit-search-cancel-button { filter:invert(1) opacity(0.5); }
+  .search-empty { text-align:center; padding:24px 0; color:var(--muted); font-size:13px; }
+  .speak-btn { position:absolute; top:12px; right:12px; background:rgba(18,35,42,0.08); border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; font-size:15px; padding:0; line-height:1; }
+  .face.back .speak-btn { background:rgba(233,243,240,0.1); }
+  .speak-btn-inline { margin-top:12px; background:rgba(18,35,42,0.07); color:var(--ink); border-radius:999px; padding:6px 14px; font-size:12px; font-weight:600; }
 </style>
 </head>
 <body>
@@ -151,8 +158,8 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-app.js";
 import {
-  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc, getDoc,
-  onSnapshot, writeBatch,
+  initializeFirestore, getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc, getDoc,
+  onSnapshot, writeBatch, persistentLocalCache, persistentMultipleTabManager,
 } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-firestore.js";
 
 // =========================================================================
@@ -190,17 +197,38 @@ if (NOT_CONFIGURED) {
 }
 
 const fbApp = initializeApp(firebaseConfig);
-const db = getFirestore(fbApp);
+
+// Çevrimdışı kalıcılık: veriler tarayıcıda da saklanır. İnternet yokken
+// uygulama açılmaya ve kart eklemeye devam eder; yapılan yazmalar kuyruğa
+// girer ve bağlantı gelince kendiliğinden Firestore'a gider.
+let db;
+try {
+  db = initializeFirestore(fbApp, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  });
+} catch (err) {
+  // Gizli sekme / eski tarayıcı gibi kalıcılığın açılamadığı durumlarda
+  // uygulama yine de çalışsın, sadece çevrimdışı desteği olmasın.
+  console.warn("Çevrimdışı kalıcılık açılamadı, bellek içi moda geçiliyor:", err);
+  db = getFirestore(fbApp); // varsa mevcut örneği döndürür, yoksa varsayılanı kurar
+}
 const decksCol = collection(db, "decks");
 const cardsCol = collection(db, "cards");
 const progressCol = collection(db, "progress");
 const statsCol = collection(db, "stats");
 
 // ---------- constants ----------
-const BOX_INTERVAL_DAYS = [0, 0, 1, 3, 7, 3];
+// Kutu başına tekrar aralığı (gün). Index = kutu numarası, 0 kullanılmıyor.
+// Aralıklar kutu yükseldikçe artmalı: 5. kutu eskiden 3 gündü, yani ustalaşılan
+// kart 4. kutudakinden (7 gün) daha sık geliyordu — düzeltildi.
+const BOX_INTERVAL_DAYS = [0, 0, 1, 3, 7, 21];
 const MAX_BOX = 5;
 const MASTERED_SESSION_CAP = 5;
 const PAUSED_SESSION_KEY = "flashcard-paused-session";
+// Kart görseli: Firestore doküman sınırı 1MB olduğu için küçültülerek saklanır.
+const IMAGE_MAX_SIDE = 480;
+const IMAGE_QUALITY = 0.72;
+const IMAGE_MAX_BYTES = 600 * 1024;
 
 // ---------- helpers ----------
 function todayStr() { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
@@ -241,6 +269,10 @@ const state = {
   editingCardId: null,
   formFront: "",
   formBack: "",
+  formImage: null,        // kart görseli (data URI) veya null
+  formImageBusy: false,
+  formImageError: null,
+  deckSearch: "",         // deste içi kart arama
   formVisibility: "both", // 'both' | user name
   focusFrontOnOpen: false,
   studyMode: "flip",
@@ -252,6 +284,7 @@ const state = {
   mcSelected: null,
   sessionCorrect: 0,
   sessionWrong: 0,
+  sessionReviewed: 0, // istatistiğe henüz işlenmemiş tekrar sayısı
   lastAction: null, // for undo
 };
 
@@ -264,6 +297,62 @@ function maybeRender() {
 }
 
 // ---------- image resize ----------
+// Seçilen görseli tarayıcıda küçültüp JPEG data URI'ye çevirir. Firestore
+// dokümanı 1MB'ı aşamayacağı için orijinal dosya asla olduğu gibi saklanmaz.
+function resizeImageFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith("image/")) { reject(new Error("Bu bir görsel dosyası değil.")); return; }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Dosya okunamadı."));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Görsel açılamadı."));
+      img.onload = () => {
+        const scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        let out = canvas.toDataURL("image/jpeg", IMAGE_QUALITY);
+        // Hâlâ büyükse kaliteyi kademeli düşür.
+        let q = IMAGE_QUALITY;
+        while (out.length > IMAGE_MAX_BYTES && q > 0.3) {
+          q -= 0.12;
+          out = canvas.toDataURL("image/jpeg", q);
+        }
+        if (out.length > IMAGE_MAX_BYTES) { reject(new Error("Görsel çok büyük, daha küçük bir dosya seç.")); return; }
+        resolve(out);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// ---------- sesli okuma ----------
+// Türkçeye özgü harf varsa Türkçe, yoksa İngilizce sesle okur.
+function guessLang(text) { return /[çğıöşüÇĞİÖŞÜ]/.test(text || "") ? "tr-TR" : "en-US"; }
+function speak(text) {
+  if (!("speechSynthesis" in window) || !text) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = guessLang(text);
+    const voice = speechSynthesis.getVoices().find((v) => v.lang === u.lang)
+      || speechSynthesis.getVoices().find((v) => v.lang.startsWith(u.lang.slice(0, 2)));
+    if (voice) u.voice = voice;
+    speechSynthesis.speak(u);
+  } catch (err) { console.warn("Sesli okuma başarısız:", err); }
+}
+const speechSupported = typeof window !== "undefined" && "speechSynthesis" in window;
+
+// ---------- klavye ----------
+// Kısayol ipuçları yalnızca fiziksel klavyesi olan cihazlarda gösterilsin.
+const hasKeyboard = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+function keyboardHint() { return hasKeyboard ? " · <b>Boşluk</b>" : ""; }
+
 // ---------- progress / stats helpers ----------
 function getProgress(cardId, user) {
   return progressList.find((p) => p.cardId === cardId && p.user === user) || { box: 1, nextReview: null, correctCount: 0, wrongCount: 0 };
@@ -273,6 +362,20 @@ function getStats(user) {
 }
 function visibleCards(deckId, user) {
   return cards.filter((c) => c.deckId === deckId && (c.visibility === "both" || c.visibility === user));
+}
+// Kullanıcının görebildiği TÜM kartlar (deste farketmeksizin). İstatistikler
+// eskiden `cards` dizisinin tamamını kullanıyordu; karşı tarafa özel kartlar
+// da sayıma giriyordu.
+function allVisibleCards(user) {
+  return cards.filter((c) => c.visibility === "both" || c.visibility === user);
+}
+// Ekranda gösterilecek güncel seri. Kayıtlı streak yalnızca seans bitince
+// güncellendiği için, aradan gün geçmişse ekranda bayat kalıyordu.
+function currentStreak(user) {
+  const s = getStats(user);
+  if (!s.streak || !s.lastStudyDate) return 0;
+  if (s.lastStudyDate === todayStr() || s.lastStudyDate === daysAgoStr(1)) return s.streak;
+  return 0; // seri kopmuş
 }
 function masteredCountFor(user) {
   return progressList.filter((p) => p.user === user && p.box >= MAX_BOX).length;
@@ -337,6 +440,7 @@ async function saveCardForm() {
     front: state.formFront.trim(),
     back: state.formBack.trim(),
     visibility: state.formVisibility,
+    image: state.formImage || null,
   };
   const btn = document.getElementById("btn-save-card");
   if (btn) { btn.disabled = true; btn.textContent = "Kaydediliyor…"; }
@@ -406,9 +510,34 @@ function parseImportText(text) {
   }
   return pairs;
 }
+// Aynı kartın iki kez eklenmesini önlemek için karşılaştırma anahtarı.
+function cardKey(front, back) {
+  return `${(front || "").trim().toLocaleLowerCase("tr")}\u001f${(back || "").trim().toLocaleLowerCase("tr")}`;
+}
+
 async function runImport() {
-  const pairs = parseImportText(state.importText);
-  if (pairs.length === 0) return;
+  const parsed = parseImportText(state.importText);
+  if (parsed.length === 0) return;
+
+  // Hem destede zaten var olanları hem de yapıştırılan metnin kendi içindeki
+  // tekrarları ele.
+  const seen = new Set(cards.filter((c) => c.deckId === state.activeDeckId).map((c) => cardKey(c.front, c.back)));
+  const pairs = [];
+  let skipped = 0;
+  for (const pair of parsed) {
+    const key = cardKey(pair.front, pair.back);
+    if (seen.has(key)) { skipped++; continue; }
+    seen.add(key);
+    pairs.push(pair);
+  }
+
+  if (pairs.length === 0) {
+    alert(`Eklenecek yeni kart yok — ${skipped} kartın hepsi zaten bu destede var.`);
+    state.showImport = false; state.importText = "";
+    pendingRender = false; render();
+    return;
+  }
+
   const chunks = [];
   for (let i = 0; i < pairs.length; i += 400) chunks.push(pairs.slice(i, i + 400));
   for (const chunk of chunks) {
@@ -425,7 +554,9 @@ async function runImport() {
   }
   state.showImport = false; state.importText = "";
   pendingRender = false; render();
-  alert(`${pairs.length} kart eklendi.`);
+  alert(skipped > 0
+    ? `${pairs.length} kart eklendi. ${skipped} kart zaten bu destede olduğu için atlandı.`
+    : `${pairs.length} kart eklendi.`);
 }
 
 // =========================================================================
@@ -608,8 +739,9 @@ function startStudy(mode, all) {
   state.queue = state.studyOrder === "sequential"
     ? [...due].sort((a, b) => a.front.localeCompare(b.front, "tr"))
     : [...due].sort(() => Math.random() - 0.5);
+  commitSessionStats(); // önceki seanstan işlenmemiş tekrar kaldıysa yaz
   state.qIndex = 0; state.flipped = false;
-  state.sessionCorrect = 0; state.sessionWrong = 0;
+  state.sessionCorrect = 0; state.sessionWrong = 0; state.sessionReviewed = 0;
   state.studyMode = mode; state.mcSelected = null; state.lastAction = null;
   if (mode === "mc") state.mcOptions = buildMcOptions(state.queue[0]);
   state.view = "study"; render();
@@ -649,12 +781,14 @@ function resumeSession() {
   state.studyMode = snap.mode;
   state.sessionCorrect = snap.sessionCorrect || 0;
   state.sessionWrong = snap.sessionWrong || 0;
+  state.sessionReviewed = 0; // duraklatırken zaten istatistiğe işlenmişti
   state.flipped = false; state.mcSelected = null; state.lastAction = null;
   if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
   state.view = "study"; render();
 }
 function stopSession() {
   saveSessionSnapshot();
+  commitSessionStats();   // yarım seansta yapılan tekrarlar da sayılsın
   state.view = "deck"; render();
 }
 function deleteStudyCard() {
@@ -670,17 +804,33 @@ function deleteStudyCard() {
   render();
 }
 
-async function finishSession() {
-  clearPausedSession();
+// Seansta gerçekten yapılan tekrarları istatistiğe işler. Seans yarıda
+// kesilse de çağrılır; iki kez çağrılırsa ikincisi sayaç sıfırlandığı için
+// bir şey yapmaz.
+async function commitSessionStats() {
+  const reviewed = state.sessionReviewed;
+  if (reviewed <= 0) return;
+  state.sessionReviewed = 0;
   const s = getStats(state.currentUser);
   const today = todayStr();
   const updated = { ...s };
+  delete updated.id;
   if (updated.lastStudyDate !== today) {
     updated.streak = updated.lastStudyDate === daysAgoStr(1) ? (updated.streak || 0) + 1 : 1;
     updated.lastStudyDate = today;
   }
-  updated.totalReviewed = (updated.totalReviewed || 0) + state.queue.length;
-  await setDoc(doc(db, "stats", state.currentUser), updated, { merge: true });
+  updated.totalReviewed = (updated.totalReviewed || 0) + reviewed;
+  try {
+    await setDoc(doc(db, "stats", state.currentUser), updated, { merge: true });
+  } catch (err) {
+    console.error(err);
+    state.sessionReviewed = reviewed; // yazılamadıysa kaybetme, sonra tekrar denenir
+  }
+}
+
+async function finishSession() {
+  clearPausedSession();
+  await commitSessionStats();
   state.view = "summary"; render();
 }
 
@@ -694,9 +844,12 @@ async function applyReview(card, action) {
 
   let box = cur.box, nextReview, correctDelta = 0, wrongDelta = 0;
   if (action === "wrong") {
-    box = 2; // her zaman 2. seviyeye iner
-    nextReview = new Date(); nextReview.setDate(nextReview.getDate() + (BOX_INTERVAL_DAYS[2] ?? 1));
-    nextReview = nextReview.toISOString();
+    // En fazla 2. seviyeye iner ama ASLA yükselmez: eskiden kutu 1'deki yeni
+    // bir kartı bilememek onu kutu 2'ye terfi ettirip yarına erteliyordu.
+    box = Math.min(cur.box || 1, 2);
+    const days = BOX_INTERVAL_DAYS[box] ?? 1;
+    const d = new Date(); d.setDate(d.getDate() + days);
+    nextReview = days === 0 ? new Date().toISOString() : d.toISOString();
     wrongDelta = 1;
   } else if (action === "know") {
     box = Math.min(MAX_BOX, cur.box + 1);
@@ -716,6 +869,7 @@ async function applyReview(card, action) {
   state.lastAction = { key, prevExisted: !!existingDoc, prevData: prev, queueIndex: state.qIndex, correctDelta, wrongDelta };
   await setDoc(doc(db, "progress", key), next, { merge: false });
   if (action === "wrong") state.sessionWrong++; else state.sessionCorrect++;
+  state.sessionReviewed++;
 }
 
 async function undoLastAction() {
@@ -726,6 +880,7 @@ async function undoLastAction() {
   state.qIndex = a.queueIndex;
   state.sessionCorrect -= a.correctDelta;
   state.sessionWrong -= a.wrongDelta;
+  if (state.sessionReviewed > 0) state.sessionReviewed--;
   state.flipped = false; state.mcSelected = null;
   if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
   state.lastAction = null;
@@ -747,7 +902,8 @@ function handleMcSelect(option) {
   if (state.mcSelected !== null) return;
   state.mcSelected = option;
   const card = state.queue[state.qIndex];
-  const correct = option === card.back;
+  // Gözle aynı görünen iki şık (ör. sondaki boşluk farkı) yanlış sayılmasın.
+  const correct = option.trim() === card.back.trim();
   applyReview(card, correct ? "know" : "wrong").then(() => render());
 }
 
@@ -768,6 +924,7 @@ function render() {
   if (state.showBackup) appEl.insertAdjacentHTML("beforeend", renderBackupModal());
 
   if (state.view === "study") saveSessionSnapshot();
+  if (state.view === "deck") applyCardSearch();
 
   bindEvents();
 }
@@ -780,14 +937,14 @@ function renderUserSwitch() {
 
 function renderHome() {
   const totalMastered = masteredCountFor(state.currentUser);
-  const s = getStats(state.currentUser);
+  const myCards = allVisibleCards(state.currentUser);
   return `
     ${renderUserSwitch()}
     <div class="top-row">
       <h1 style="font-size:28px;">Kart Kutusu</h1>
-      <div class="streak-pill">🔥 <span class="mono">${s.streak || 0}</span></div>
+      <div class="streak-pill">🔥 <span class="mono">${currentStreak(state.currentUser)}</span></div>
     </div>
-    <p class="muted" style="font-size:14px;margin-bottom:14px;">${cards.length} kart · ${totalMastered} tanesi ustalaşıldı (${esc(state.currentUser)})</p>
+    <p class="muted" style="font-size:14px;margin-bottom:14px;">${myCards.length} kart · ${totalMastered} tanesi ustalaşıldı (${esc(state.currentUser)})</p>
     <div class="nav-row">
       <button class="nav-btn" id="btn-nav-stats">📊 İstatistikler</button>
       <button class="nav-btn" id="btn-nav-backup">💾 Yedek</button>
@@ -826,7 +983,8 @@ function renderDeck() {
   const stageLearned = dc.filter((c) => getProgress(c.id, state.currentUser).box >= MAX_BOX).sort(byFront);
 
   const cardRow = (c) => `
-    <div class="card-row">
+    <div class="card-row" data-card-row="${c.id}" data-search-text="${esc(((c.front || "") + " " + (c.back || "")).toLocaleLowerCase("tr"))}">
+      ${c.image ? `<img class="thumb" src="${esc(c.image)}" alt="">` : ""}
       <div style="flex:1;min-width:0;">
         <div class="front">${esc(c.front)}</div>
         <div class="back">${esc(c.back)}</div>
@@ -870,10 +1028,46 @@ function renderDeck() {
     </div>
     <button class="btn btn-outline" id="btn-open-export" style="margin-bottom:18px;">⇩ Dışa aktar</button>
     ${dc.length === 0 ? `<div class="empty-state">Bu destede henüz kart yok.</div>` : ""}
-    ${stageNew.length ? `<div class="stage-header">Yeni <span class="count">· ${stageNew.length}</span></div>${stageNew.map(cardRow).join("")}` : ""}
-    ${stageLearning.length ? `<div class="stage-header">Öğreniliyor <span class="count">· ${stageLearning.length}</span></div>${stageLearning.map(cardRow).join("")}` : ""}
-    ${stageLearned.length ? `<div class="stage-header">Öğrenildi <span class="count">· ${stageLearned.length}</span></div>${stageLearned.map(cardRow).join("")}` : ""}
+    ${dc.length > 6 ? `
+      <div class="search-wrap">
+        <input type="search" id="input-card-search" class="text-input" placeholder="🔍 Kartlarda ara…" value="${esc(state.deckSearch)}" style="margin-bottom:0;">
+      </div>
+      <div class="search-empty" id="search-empty" hidden>Aramaya uyan kart yok.</div>
+    ` : ""}
+    ${stageNew.length ? `<div class="stage-header" data-stage="new">Yeni <span class="count">· <span data-stage-count>${stageNew.length}</span></span></div>${stageNew.map(cardRow).join("")}` : ""}
+    ${stageLearning.length ? `<div class="stage-header" data-stage="learning">Öğreniliyor <span class="count">· <span data-stage-count>${stageLearning.length}</span></span></div>${stageLearning.map(cardRow).join("")}` : ""}
+    ${stageLearned.length ? `<div class="stage-header" data-stage="learned">Öğrenildi <span class="count">· <span data-stage-count>${stageLearned.length}</span></span></div>${stageLearned.map(cardRow).join("")}` : ""}
   `;
+}
+
+// Deste içi arama. Bilerek yeniden çizim yapmıyor — her tuş vuruşunda render
+// edilseydi arama kutusu odağı ve imleci kaybederdi. Bunun yerine satırlar
+// doğrudan gizlenip gösteriliyor, başlık sayıları da buna göre güncelleniyor.
+function applyCardSearch() {
+  const q = state.deckSearch.trim().toLocaleLowerCase("tr");
+  const rows = appEl.querySelectorAll("[data-card-row]");
+  if (!rows.length) return;
+
+  let anyVisible = false;
+  rows.forEach((row) => {
+    const hit = !q || (row.dataset.searchText || "").includes(q);
+    row.hidden = !hit;
+    if (hit) anyVisible = true;
+  });
+
+  // Her aşama başlığından sonraki görünür kart sayısını yeniden say.
+  appEl.querySelectorAll(".stage-header[data-stage]").forEach((header) => {
+    let visible = 0;
+    for (let el = header.nextElementSibling; el && el.hasAttribute("data-card-row"); el = el.nextElementSibling) {
+      if (!el.hidden) visible++;
+    }
+    header.hidden = visible === 0;
+    const countEl = header.querySelector("[data-stage-count]");
+    if (countEl) countEl.textContent = visible;
+  });
+
+  const emptyEl = document.getElementById("search-empty");
+  if (emptyEl) emptyEl.hidden = anyVisible;
 }
 
 function renderStudy() {
@@ -899,17 +1093,27 @@ function renderStudy() {
       ${header}
       <div class="perspective">
         <div class="flip-inner ${state.flipped ? "flipped" : ""}" id="flip-card">
-          <div class="face front"><span class="face-label">SORU</span><p class="face-text">${esc(card.front)}</p></div>
-          <div class="face back"><span class="face-label">CEVAP</span><p class="face-text">${esc(card.back)}</p></div>
+          <div class="face front">
+            <span class="face-label">SORU</span>
+            ${speechSupported ? `<button class="speak-btn" data-speak="${esc(card.front)}" title="Sesli oku">🔊</button>` : ""}
+            ${card.image ? `<img src="${esc(card.image)}" alt="">` : ""}
+            <p class="face-text">${esc(card.front)}</p>
+          </div>
+          <div class="face back">
+            <span class="face-label">CEVAP</span>
+            ${speechSupported ? `<button class="speak-btn" data-speak="${esc(card.back)}" title="Sesli oku">🔊</button>` : ""}
+            <p class="face-text">${esc(card.back)}</p>
+          </div>
         </div>
       </div>
       ${!state.flipped
-        ? `<p class="hint">Kartı çevirmek için dokun</p>`
+        ? `<p class="hint">Kartı çevirmek için dokun${keyboardHint()}</p>`
         : `<div class="answer-grid">
             <button class="answer-btn" id="btn-wrong" style="background:rgba(225,87,79,0.15);color:var(--danger);border:1.5px solid var(--danger);">✕ Bilmedim</button>
             <button class="answer-btn" id="btn-know" style="background:rgba(69,176,140,0.15);color:var(--success);border:1.5px solid var(--success);">✓ Bildim</button>
           </div>
-          <button class="master-btn" id="btn-master">✓✓ Kesin öğrendim</button>`
+          <button class="master-btn" id="btn-master">✓✓ Kesin öğrendim</button>
+          ${hasKeyboard ? `<p class="hint" style="margin-bottom:10px;"><b>1</b> bilmedim · <b>2</b> bildim · <b>3</b> kesin öğrendim</p>` : ""}`
       }
       <div class="nav-actions" style="margin-top:6px;">
         <button class="btn-secondary" id="btn-undo" ${state.lastAction ? "" : "disabled"}>↺ Geri al</button>
@@ -920,9 +1124,13 @@ function renderStudy() {
   const selected = state.mcSelected;
   return `
     ${header}
-    <div class="mc-question"><p>${esc(card.front)}</p></div>
+    <div class="mc-question">
+      ${card.image ? `<img src="${esc(card.image)}" alt="">` : ""}
+      <p>${esc(card.front)}</p>
+      ${speechSupported ? `<button class="speak-btn-inline" data-speak="${esc(card.front)}" title="Sesli oku">🔊 Dinle</button>` : ""}
+    </div>
     ${state.mcOptions.map((opt) => {
-      const isCorrect = opt === card.back;
+      const isCorrect = opt.trim() === card.back.trim();
       let style = "";
       if (selected !== null) {
         if (isCorrect) style = "background:rgba(69,176,140,0.15);border-color:var(--success);color:var(--success);";
@@ -946,7 +1154,7 @@ function renderSummary() {
     <div style="text-align:center;padding-top:30px;">
       <div class="summary-icon">🔥</div>
       <h1 style="font-size:24px;margin-bottom:4px;">Seans tamamlandı</h1>
-      <p class="muted" style="font-size:14px;margin-bottom:26px;">${esc(state.currentUser)} · ${s.streak || 0} günlük seri</p>
+      <p class="muted" style="font-size:14px;margin-bottom:26px;">${esc(state.currentUser)} · ${currentStreak(state.currentUser)} günlük seri</p>
       <div class="grid-2" style="margin-bottom:22px;">
         <div class="stat-box"><div class="stat-num" style="color:var(--success);">${state.sessionCorrect}</div><p class="muted" style="font-size:12px;margin-top:4px;">Doğru</p></div>
         <div class="stat-box"><div class="stat-num" style="color:var(--danger);">${state.sessionWrong}</div><p class="muted" style="font-size:12px;margin-top:4px;">Yanlış</p></div>
@@ -962,23 +1170,26 @@ function renderStats() {
     const s = getStats(user);
     const mastered = masteredCountFor(user);
     const level = levelFor(mastered);
+    // Yalnızca bu kullanıcının görebildiği kartlar sayılır; karşı tarafa özel
+    // kartlar eskiden buraya da karışıyordu.
+    const myCards = allVisibleCards(user);
     return `
       <div class="user-stat-card">
         <div class="user-stat-head">
           <div class="avatar">${esc(user[0])}</div>
           <div>
             <div style="font-weight:600;">${esc(user)}</div>
-            <div class="muted" style="font-size:11px;">🔥 ${s.streak || 0} günlük seri</div>
+            <div class="muted" style="font-size:11px;">🔥 ${currentStreak(user)} günlük seri</div>
           </div>
           <span class="level-badge">${level}</span>
         </div>
         <div class="stat-mini-grid">
           <div class="stat-mini"><div class="n">${mastered}</div><div class="l">Ustalaşılan</div></div>
           <div class="stat-mini"><div class="n">${s.totalReviewed || 0}</div><div class="l">Toplam tekrar</div></div>
-          <div class="stat-mini"><div class="n">${cards.length}</div><div class="l">Deste toplamı</div></div>
+          <div class="stat-mini"><div class="n">${myCards.length}</div><div class="l">Toplam kart</div></div>
         </div>
       </div>
-      ${renderLearningCurve(cards, user, `${user} · genel öğrenme eğrisi`)}`;
+      ${renderLearningCurve(myCards, user, `${user} · genel öğrenme eğrisi`)}`;
   };
   return `
     <button class="back-link" id="btn-back-home">‹ Ana ekrana dön</button>
@@ -1018,7 +1229,20 @@ function renderCardFormModal() {
           <textarea id="input-front" rows="2" class="autogrow">${esc(state.formFront)}</textarea>
 
           <label class="field-label">Arka yüz (cevap)</label>
-          <textarea id="input-back" rows="2" class="autogrow" style="margin-bottom:0;">${esc(state.formBack)}</textarea>
+          <textarea id="input-back" rows="2" class="autogrow">${esc(state.formBack)}</textarea>
+
+          <label class="field-label">Görsel (isteğe bağlı)</label>
+          <input type="file" id="input-card-image" accept="image/*" style="display:none;">
+          <div class="img-picker">
+            ${state.formImage
+              ? `<img class="img-preview" src="${esc(state.formImage)}" alt="">`
+              : `<div class="img-preview" style="display:flex;align-items:center;justify-content:center;font-size:20px;">🖼</div>`}
+            <button type="button" class="img-pick-btn" id="btn-pick-image" ${state.formImageBusy ? "disabled" : ""}>
+              ${state.formImageBusy ? "Küçültülüyor…" : state.formImage ? "Değiştir" : "Görsel ekle"}
+            </button>
+            ${state.formImage ? `<button type="button" class="img-remove-btn" id="btn-remove-image">Kaldır</button>` : ""}
+          </div>
+          ${state.formImageError ? `<div class="backup-error">${esc(state.formImageError)}</div>` : ""}
         </div>
         <div class="modal-footer">
           <button class="btn btn-primary" id="btn-save-card">Kaydet</button>
@@ -1179,9 +1403,40 @@ function bindEvents() {
   if (btnAddCard) btnAddCard.onclick = () => {
     state.editingCardId = null;
     state.formFront = ""; state.formBack = ""; state.formVisibility = lastVisibility;
+    state.formImage = null; state.formImageError = null; state.formImageBusy = false;
     state.focusFrontOnOpen = true;
     state.showCardForm = true; render();
   };
+  // ---- kart arama ----
+  const inputCardSearch = document.getElementById("input-card-search");
+  if (inputCardSearch) {
+    inputCardSearch.oninput = () => { state.deckSearch = inputCardSearch.value; applyCardSearch(); };
+    inputCardSearch.onsearch = () => { state.deckSearch = inputCardSearch.value; applyCardSearch(); };
+  }
+
+  // ---- kart görseli ----
+  const inputCardImage = document.getElementById("input-card-image");
+  const btnPickImage = document.getElementById("btn-pick-image");
+  if (btnPickImage && inputCardImage) btnPickImage.onclick = () => inputCardImage.click();
+  if (inputCardImage) inputCardImage.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    state.formImageBusy = true; state.formImageError = null; render();
+    try {
+      state.formImage = await resizeImageFile(file);
+    } catch (err) {
+      state.formImageError = err.message;
+    }
+    state.formImageBusy = false; render();
+  };
+  const btnRemoveImage = document.getElementById("btn-remove-image");
+  if (btnRemoveImage) btnRemoveImage.onclick = () => { state.formImage = null; state.formImageError = null; render(); };
+
+  // ---- sesli okuma ----
+  document.querySelectorAll("[data-speak]").forEach((el) => {
+    el.onclick = (e) => { e.stopPropagation(); speak(el.dataset.speak); };
+  });
+
   const btnOpenImport = document.getElementById("btn-open-import");
   if (btnOpenImport) btnOpenImport.onclick = () => { state.importText = ""; state.showImport = true; render(); };
   const btnOpenExport = document.getElementById("btn-open-export");
@@ -1194,11 +1449,20 @@ function bindEvents() {
       state.editingCardId = c.id;
       state.formFront = c.front; state.formBack = c.back;
       state.formVisibility = c.visibility || "both";
+      state.formImage = c.image || null; state.formImageError = null; state.formImageBusy = false;
       state.focusFrontOnOpen = false;
       state.showCardForm = true; render();
     };
   });
-  document.querySelectorAll("[data-delete-card]").forEach((el) => { el.onclick = () => deleteCard(el.dataset.deleteCard); });
+  document.querySelectorAll("[data-delete-card]").forEach((el) => {
+    el.onclick = () => {
+      const c = cards.find((x) => x.id === el.dataset.deleteCard);
+      if (!c) return;
+      // Kart ve ona bağlı tüm ilerleme kalıcı olarak silinir — önce sor.
+      if (!confirm(`"${c.front}" kartını silmek istiyor musun?\n\nBu kartın ilerlemesi de silinecek ve geri alınamaz.`)) return;
+      deleteCard(c.id);
+    };
+  });
 
   const overlayNewDeck = document.getElementById("overlay-new-deck");
   if (overlayNewDeck) overlayNewDeck.onclick = (e) => { if (e.target === overlayNewDeck) { state.showNewDeck = false; render(); } };
@@ -1290,7 +1554,7 @@ function bindEvents() {
   if (btnRunRestore) btnRunRestore.onclick = runRestore;
 
   const btnExitStudy = document.getElementById("btn-exit-study");
-  if (btnExitStudy) btnExitStudy.onclick = () => { state.view = "deck"; render(); };
+  if (btnExitStudy) btnExitStudy.onclick = () => { commitSessionStats(); state.view = "deck"; render(); };
   const btnStopStudy = document.getElementById("btn-stop-study");
   if (btnStopStudy) btnStopStudy.onclick = stopSession;
   const btnDeleteStudyCard = document.getElementById("btn-delete-study-card");
@@ -1302,6 +1566,7 @@ function bindEvents() {
     state.editingCardId = c.id;
     state.formFront = c.front; state.formBack = c.back;
     state.formVisibility = c.visibility || "both";
+    state.formImage = c.image || null; state.formImageError = null; state.formImageBusy = false;
     state.focusFrontOnOpen = false;
     state.showCardForm = true; render();
   };
@@ -1324,6 +1589,44 @@ function bindEvents() {
   const btnSummaryDone = document.getElementById("btn-summary-done");
   if (btnSummaryDone) btnSummaryDone.onclick = () => { state.view = "deck"; render(); };
 }
+
+// ---------- klavye kısayolları ----------
+// Yalnızca çalışma ekranında ve hiçbir pencere açık değilken çalışır.
+document.addEventListener("keydown", (e) => {
+  if (state.view !== "study" || modalOpen()) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const tag = (document.activeElement && document.activeElement.tagName) || "";
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+  const card = state.queue[state.qIndex];
+  if (!card) return;
+
+  if (state.studyMode === "flip") {
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      state.flipped = !state.flipped; render();
+      return;
+    }
+    if (state.flipped && (e.key === "1" || e.key === "2" || e.key === "3")) {
+      e.preventDefault();
+      handleFlipAnswer(e.key === "1" ? "wrong" : e.key === "2" ? "know" : "master");
+      return;
+    }
+  } else if (state.studyMode === "mc") {
+    const n = Number(e.key);
+    if (state.mcSelected === null && n >= 1 && n <= state.mcOptions.length) {
+      e.preventDefault(); handleMcSelect(state.mcOptions[n - 1]); return;
+    }
+    if (state.mcSelected !== null && (e.key === " " || e.key === "Enter")) {
+      e.preventDefault(); advanceQueue(); return;
+    }
+  }
+
+  if (e.key === "ArrowLeft") { e.preventDefault(); goToPreviousCard(); }
+  else if (e.key === "s" || e.key === "S") { e.preventDefault(); speak(state.flipped ? card.back : card.front); }
+  else if (e.key === "z" || e.key === "Z") { e.preventDefault(); undoLastAction(); }
+  else if (e.key === "Escape") { e.preventDefault(); commitSessionStats(); state.view = "deck"; render(); }
+});
 
 document.addEventListener("visibilitychange", () => { if (document.hidden) saveSessionSnapshot(); });
 window.addEventListener("pagehide", saveSessionSnapshot);
