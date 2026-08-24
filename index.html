@@ -21,6 +21,9 @@
     --border: rgba(233,243,240,0.12);
   }
   * { box-sizing: border-box; }
+  /* display:flex gibi yazar kuralları tarayıcının [hidden] kuralını ezer;
+     bu yüzden hidden özniteliği tek başına gizlemeye yetmiyordu. */
+  [hidden] { display: none !important; }
   html, body { margin:0; padding:0; background:var(--bg); font-family:'Inter',system-ui,sans-serif; color:var(--text); -webkit-tap-highlight-color:transparent; }
   #app { max-width:480px; margin:0 auto; padding:20px 16px 60px; min-height:100vh; }
   h1,h2,h3 { font-family:'Fraunces',Georgia,serif; margin:0; }
@@ -146,7 +149,9 @@
   .search-wrap { margin:18px 0 4px; }
   .search-wrap input { margin-bottom:0; }
   .search-wrap input::-webkit-search-cancel-button { filter:invert(1) opacity(0.5); }
-  .search-empty { text-align:center; padding:24px 0; color:var(--muted); font-size:13px; }
+  .search-count { font-size:11.5px; color:var(--coral); margin:8px 2px 0; font-weight:600; }
+  .search-divider { display:flex; align-items:center; gap:10px; margin:22px 0 14px; font-size:10.5px; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted); }
+  .search-divider::before, .search-divider::after { content:""; flex:1; height:1px; background:var(--border); }
   .speak-btn { position:absolute; top:12px; right:12px; background:rgba(18,35,42,0.08); border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; font-size:15px; padding:0; line-height:1; }
   .face.back .speak-btn { background:rgba(233,243,240,0.1); }
   .speak-btn-inline { margin-top:12px; background:rgba(18,35,42,0.07); color:var(--ink); border-radius:999px; padding:6px 14px; font-size:12px; font-weight:600; }
@@ -1362,43 +1367,73 @@ function renderDeck() {
     ${dc.length > 6 ? `
       <div class="search-wrap">
         <input type="search" id="input-card-search" class="text-input" placeholder="🔍 Kartlarda ara…" value="${esc(state.deckSearch)}" style="margin-bottom:0;">
+        <p class="search-count" id="search-count" hidden></p>
       </div>
-      <div class="search-empty" id="search-empty" hidden>Aramaya uyan kart yok.</div>
     ` : ""}
-    ${stageNew.length ? `<div class="stage-header" data-stage="new">Yeni <span class="count">· <span data-stage-count>${stageNew.length}</span></span></div>${stageNew.map(cardRow).join("")}` : ""}
-    ${stageLearning.length ? `<div class="stage-header" data-stage="learning">Öğreniliyor <span class="count">· <span data-stage-count>${stageLearning.length}</span></span></div>${stageLearning.map(cardRow).join("")}` : ""}
-    ${stageLearned.length ? `<div class="stage-header" data-stage="learned">Öğrenildi <span class="count">· <span data-stage-count>${stageLearned.length}</span></span></div>${stageLearned.map(cardRow).join("")}` : ""}
-  `;
+    <div id="card-list">
+      ${stageNew.length ? `<div class="stage-header" data-stage="new">Yeni <span class="count">· ${stageNew.length}</span></div>${stageNew.map(cardRow).join("")}` : ""}
+      ${stageLearning.length ? `<div class="stage-header" data-stage="learning">Öğreniliyor <span class="count">· ${stageLearning.length}</span></div>${stageLearning.map(cardRow).join("")}` : ""}
+      ${stageLearned.length ? `<div class="stage-header" data-stage="learned">Öğrenildi <span class="count">· ${stageLearned.length}</span></div>${stageLearned.map(cardRow).join("")}` : ""}
+    </div>`;
 }
 
 // Deste içi arama. Bilerek yeniden çizim yapmıyor — her tuş vuruşunda render
 // edilseydi arama kutusu odağı ve imleci kaybederdi. Bunun yerine satırlar
 // doğrudan gizlenip gösteriliyor, başlık sayıları da buna göre güncelleniyor.
 function applyCardSearch() {
+  const list = document.getElementById("card-list");
+  if (!list) return;
+
+  // İlk çağrıda özgün sıra saklanır; arama temizlenince buna geri dönülür.
+  if (!list.__originalOrder) list.__originalOrder = [...list.children];
+  const original = list.__originalOrder;
+
   const q = state.deckSearch.trim().toLocaleLowerCase("tr");
-  const rows = appEl.querySelectorAll("[data-card-row]");
-  if (!rows.length) return;
+  const countEl = document.getElementById("search-count");
 
-  let anyVisible = false;
-  rows.forEach((row) => {
-    const hit = !q || (row.dataset.searchText || "").includes(q);
-    row.hidden = !hit;
-    if (hit) anyVisible = true;
-  });
+  // Arama yoksa her şey özgün haline döner.
+  if (!q) {
+    for (const el of original) { el.hidden = false; list.appendChild(el); }
+    const divider = document.getElementById("search-divider");
+    if (divider) divider.remove();
+    if (countEl) { countEl.hidden = true; countEl.textContent = ""; }
+    return;
+  }
 
-  // Her aşama başlığından sonraki görünür kart sayısını yeniden say.
-  appEl.querySelectorAll(".stage-header[data-stage]").forEach((header) => {
-    let visible = 0;
-    for (let el = header.nextElementSibling; el && el.hasAttribute("data-card-row"); el = el.nextElementSibling) {
-      if (!el.hidden) visible++;
+  const matches = [];
+  const rest = [];
+  for (const el of original) {
+    if (!el.hasAttribute("data-card-row")) {
+      // Aşama başlıkları arama sırasında gizlenir; kartlar gruplarından
+      // çıkıp yukarı taşındığı için başlıklar artık doğru bilgi vermiyor.
+      el.hidden = true;
+      rest.push(el);
+      continue;
     }
-    header.hidden = visible === 0;
-    const countEl = header.querySelector("[data-stage-count]");
-    if (countEl) countEl.textContent = visible;
-  });
+    el.hidden = false;
+    ((el.dataset.searchText || "").includes(q) ? matches : rest).push(el);
+  }
 
-  const emptyEl = document.getElementById("search-empty");
-  if (emptyEl) emptyEl.hidden = anyVisible;
+  // Eşleşenler üste, sonra ayırıcı, sonra geri kalan her şey özgün sırasıyla.
+  for (const el of matches) list.appendChild(el);
+
+  let divider = document.getElementById("search-divider");
+  if (!divider) {
+    divider = document.createElement("div");
+    divider.id = "search-divider";
+    divider.className = "search-divider";
+  }
+  divider.textContent = matches.length ? "diğer kartlar" : "eşleşme yok — tüm kartlar";
+  list.appendChild(divider);
+
+  for (const el of rest) list.appendChild(el);
+
+  if (countEl) {
+    countEl.hidden = false;
+    countEl.textContent = matches.length
+      ? `${matches.length} kart eşleşti, en üste alındı`
+      : "Eşleşen kart yok";
+  }
 }
 
 function renderStudy() {
