@@ -81,6 +81,33 @@ Güvenlik kuralları `firestore.rules` dosyasında. Firebase konsolunda
 Firestore Database → Rules altına yapıştırılması gerekir; dosyanın başındaki
 açıklama nasıl yapılacağını ve kuralın ne anlama geldiğini anlatır.
 
+## Renk paleti
+
+Koyu (dark-first) tema. Tüm renkler `index.html` içindeki `:root` bloğunda
+CSS değişkeni olarak tanımlı; stil kurallarında sabit renk yazılmaz.
+
+| Değişken | Kullanım |
+|---|---|
+| `--bg` | Sayfa zemini |
+| `--panel` | Kart/panel yüzeyi |
+| `--panel-acik` | Üçüncü katman (çalışma kartının ön yüzü, modal içi) |
+| `--line` | Ayraç ve kenarlıklar |
+| `--metin` / `--sonuk` | Ana metin / ikincil metin |
+| `--mavi` | Birincil vurgu ve aksiyon |
+| `--yesil` `--kirmizi` `--sari` | Başarı / hata / uyarı |
+| `--kutu1`…`--kutu5` | Öğrenme kutusu ölçeği, paletten türetilir |
+| `--r` / `--r-kucuk` | Köşe yuvarlaklığı (16px / 8px) |
+
+Derinlik gölgeyle değil, yüzey tonu farkı (`--bg` < `--panel` < `--panel-acik`)
+ve ince `--line` kenarlıklarla verilir. Vurgu renkleri geniş alan boyamak için
+değil, durum bildirimi ve seçili öğe için kullanılır; yumuşak gerektiğinde
+rengin %12 opaklıklı hâli zemin, tam hâli kenarlık ve metin olur
+(`--mavi-yumusak` vb.).
+
+Tek istisna: sarı dolu zemin üzerine beyaz metin ~2:1 kontrast verdiği için
+okunmuyordu. Sarı butonlar bunun yerine paletin kendi öngördüğü yumuşak
+zemin + tam renk kenarlık/metin biçimini kullanıyor.
+
 ## Tekrar aralıkları
 
 Kutu 1 → aynı gün, 2 → 1 gün, 3 → 3 gün, 4 → 7 gün, 5 → 21 gün
