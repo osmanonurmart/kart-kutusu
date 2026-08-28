@@ -119,9 +119,8 @@ asla yükseltmez.
 | Tuş | İşlev |
 |---|---|
 | `Boşluk` / `Enter` | Kartı çevir · çoktan seçmelide devam et |
-| `1` `2` `3` | Bilmedim · Bildim · Kesin öğrendim |
+| `1` `2` | Bilmedim · Bildim |
 | `1`–`4` | Çoktan seçmelide şık seç |
 | `←` | Önceki soru |
-| `S` | Sesli oku |
 | `Z` | Geri al |
 | `Esc` | Çalışmadan çık |
