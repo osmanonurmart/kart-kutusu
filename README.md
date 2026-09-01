@@ -26,6 +26,18 @@ mevcut kayıtları sahipsiz bırakır ve ayrıca bir taşıma gerektirir:
 - Koleksiyon adları veya `progressKey()` şeması
 - Alan adları: `front`, `back`, `deckId`, `visibility`, `box`, `nextReview`
 
+## Kart metni
+
+Kart yüzleri sola dayalı yazılır ve alt satırlar korunur. Metin düz metin
+olarak saklanır; liste yalnızca ekranda çizilir:
+
+- `- ` veya `* ` ile başlayan satırlar madde listesi olur
+- `1. ` / `2. ` ile başlayanlar numaralı liste olur
+
+Kart formundaki **• Madde** ve **1. Numara** butonları seçili satırları
+listeye çevirir (aynı butona basmak geri alır). Bir madde satırında Enter'a
+basınca sıradaki madde otomatik açılır, boş maddede Enter listeden çıkar.
+
 ## Dışa / içe aktarma ve seviyeler
 
 Bir destede **⇩ Dışa aktar** her satırın sonuna iki kullanıcının kutu

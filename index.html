@@ -91,6 +91,9 @@
   .box-dot.on3 { background:var(--kutu3); }
   .box-dot.on4 { background:var(--kutu4); }
   .box-dot.on5 { background:var(--kutu5); }
+  .rt-toolbar { display:flex; gap:6px; margin:-8px 0 8px; }
+  .rt-btn { font-size:12px; font-weight:600; color:var(--sonuk); background:var(--panel); border:1px solid var(--line); border-radius:var(--r-kucuk); padding:4px 10px; }
+  .rt-btn:hover { color:var(--metin); border-color:var(--mavi); }
   .app-logo { width:38px; height:38px; flex-shrink:0; }
   .brand { display:flex; align-items:center; gap:10px; min-width:0; }
   .icon-btn { background:none; padding:4px; color:var(--sonuk); flex-shrink:0; }
@@ -119,7 +122,14 @@
   .face.back { transform:rotateY(180deg); background:var(--panel); }
   .face-label { position:absolute; top:16px; left:20px; font-size:10px; letter-spacing:2px; color:var(--sonuk); }
   .face img { width:90px; height:90px; border-radius:var(--r-kucuk); object-fit:cover; margin-bottom:14px; }
-  .face-text { font-family:'Fraunces',Georgia,serif; font-size:21px; font-weight:600; color:var(--metin); padding:0 8px; white-space:pre-wrap; word-break:break-word; }
+  .face-text { font-family:'Fraunces',Georgia,serif; font-size:21px; font-weight:600; color:var(--metin); padding:0 8px; white-space:pre-wrap; word-break:break-word; width:100%; text-align:left; }
+  /* Uzun metinlerde kart yüzü kaydırılabilir olmalı; kısa metin dikeyde ortada kalır. */
+  .face-body { width:100%; max-height:100%; overflow-y:auto; display:flex; flex-direction:column; align-items:flex-start; }
+  .rt-list { width:100%; text-align:left; margin:0; padding-left:1.35em; }
+  .rt-list li { margin:2px 0; }
+  .rt-list li::marker { color:var(--sonuk); font-weight:600; }
+  .rt-line { width:100%; text-align:left; }
+  .rt-line.blank { height:.55em; }
   .answer-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:10px; }
   .answer-btn { border-radius:var(--r); padding:15px; font-weight:600; display:flex; align-items:center; justify-content:center; gap:8px; }
   .master-btn { width:100%; border-radius:var(--r-kucuk); padding:11px; font-weight:600; font-size:13px; background:var(--sari-yumusak); color:var(--sari); border:1.5px solid var(--sari); margin-bottom:10px; }
@@ -129,9 +139,9 @@
   @keyframes cardEnter { from { opacity:0; transform:translateY(10px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
   .perspective, .mc-question { animation:cardEnter .38s cubic-bezier(.2,.8,.3,1); }
   .hint { text-align:center; font-size:12px; color:var(--sonuk); }
-  .mc-question { background:var(--panel-acik); border:1px solid var(--line); border-radius:var(--r); padding:24px; margin-bottom:18px; display:flex; flex-direction:column; align-items:center; text-align:center; min-height:150px; justify-content:center; }
+  .mc-question { background:var(--panel-acik); border:1px solid var(--line); border-radius:var(--r); padding:24px; margin-bottom:18px; display:flex; flex-direction:column; align-items:center; text-align:left; min-height:150px; justify-content:center; }
   .mc-question img { width:76px; height:76px; border-radius:var(--r-kucuk); object-fit:cover; margin-bottom:12px; }
-  .mc-question p { font-family:'Fraunces',Georgia,serif; font-size:18px; font-weight:600; color:var(--metin); white-space:pre-wrap; word-break:break-word; }
+  .mc-question .mc-text { font-family:'Fraunces',Georgia,serif; font-size:18px; font-weight:600; color:var(--metin); white-space:pre-wrap; word-break:break-word; width:100%; text-align:left; }
   .mc-option { width:100%; text-align:left; white-space:pre-wrap; word-break:break-word; border-radius:var(--r-kucuk); padding:13px 16px; font-size:14px; font-weight:500; margin-bottom:9px; background:var(--panel); border:1.5px solid var(--line); color:var(--metin); }
   .progress-bar-outer { width:100%; height:4px; border-radius:var(--r-kucuk); background:var(--line); overflow:hidden; margin-bottom:20px; }
   .progress-bar-inner { height:100%; background:var(--mavi); }
@@ -279,6 +289,117 @@ const IMAGE_MAX_BYTES = 600 * 1024;
 // ---------- helpers ----------
 function todayStr() { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
 function daysAgoStr(n) { const d = new Date(); d.setDate(d.getDate() - n); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
+// --- Kart metni biçimlendirme -----------------------------------------
+// Metin Firestore'da düz metin olarak durur ("- elma"); listeye yalnızca
+// ekranda çevrilir. Böylece yedek, dışa aktarma ve arama değişmez.
+const BULLET_RE = /^\s*[-*]\s+(.*)$/;
+const NUMBER_RE = /^\s*(\d+)[.)]\s+(.*)$/;
+
+// Kart listesindeki tek satırlık önizleme için işaretleri temizler.
+function plainCardText(text) {
+  return (text || "").split("\n").map((line) => {
+    const b = line.match(BULLET_RE);
+    if (b) return b[1];
+    const n = line.match(NUMBER_RE);
+    if (n) return n[2];
+    return line;
+  }).join(" ").replace(/\s+/g, " ").trim();
+}
+
+// Satırları madde / numaralı liste / düz satır olarak gruplayıp HTML üretir.
+// --- Liste yazımı (Notion/Keep tarzı) ---------------------------------
+// Enter'a basınca içinde bulunulan madde sürer; boş maddede Enter maddeyi
+// kaldırır. Araç çubuğu butonları seçili satırları listeye çevirir/geri alır.
+function listPrefixOf(line) {
+  const b = line.match(BULLET_RE);
+  if (b) return { kind: "bullet", prefix: line.slice(0, line.length - b[1].length), body: b[1] };
+  const n = line.match(NUMBER_RE);
+  if (n) return { kind: "number", num: parseInt(n[1], 10) || 1, prefix: line.slice(0, line.length - n[2].length), body: n[2] };
+  return null;
+}
+
+// Textarea içeriğini değiştirir ve imleci verilen yere koyar; oninput'u
+// elle tetikleyerek state'in güncel kalmasını sağlar.
+function setEditorValue(el, value, caret) {
+  el.value = value;
+  el.setSelectionRange(caret, caret);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function handleListEnter(el, e) {
+  if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+  const pos = el.selectionStart;
+  if (pos !== el.selectionEnd) return;
+  const before = el.value.slice(0, pos);
+  const lineStart = before.lastIndexOf("\n") + 1;
+  const line = before.slice(lineStart);
+  const info = listPrefixOf(line);
+  if (!info) return;
+
+  e.preventDefault();
+  // Boş madde: işareti sil, listeden çık.
+  if (!info.body.trim()) {
+    setEditorValue(el, el.value.slice(0, lineStart) + el.value.slice(pos), lineStart);
+    return;
+  }
+  const next = info.kind === "bullet" ? "- " : `${info.num + 1}. `;
+  setEditorValue(el, before + "\n" + next + el.value.slice(pos), pos + 1 + next.length);
+}
+
+// Seçili satırların tamamı zaten istenen listedeyse işaretler kaldırılır.
+function toggleListOnSelection(el, kind) {
+  const value = el.value;
+  const start = value.lastIndexOf("\n", Math.max(0, el.selectionStart - 1)) + 1;
+  let end = value.indexOf("\n", el.selectionEnd);
+  if (end === -1) end = value.length;
+
+  const lines = value.slice(start, end).split("\n");
+  const allSame = lines.every((l) => { const i = listPrefixOf(l); return i && i.kind === kind; });
+
+  let counter = 1;
+  const converted = lines.map((l) => {
+    const info = listPrefixOf(l);
+    const body = info ? info.body : l.trim();
+    if (allSame) return body;
+    if (!body) return l;
+    return kind === "bullet" ? `- ${body}` : `${counter++}. ${body}`;
+  });
+
+  const block = converted.join("\n");
+  setEditorValue(el, value.slice(0, start) + block + value.slice(end), start + block.length);
+  el.focus();
+}
+
+function renderCardText(text) {
+  const lines = (text || "").split("\n");
+  const out = [];
+  let items = null;      // biriken liste öğeleri
+  let listTag = null;    // "ul" | "ol"
+  let listStart = 1;
+
+  const flush = () => {
+    if (!items) return;
+    const startAttr = listTag === "ol" && listStart !== 1 ? ` start="${listStart}"` : "";
+    out.push(`<${listTag} class="rt-list"${startAttr}>${items.map((t) => `<li>${esc(t)}</li>`).join("")}</${listTag}>`);
+    items = null; listTag = null; listStart = 1;
+  };
+
+  for (const line of lines) {
+    const bullet = line.match(BULLET_RE);
+    const number = bullet ? null : line.match(NUMBER_RE);
+    if (bullet || number) {
+      const tag = bullet ? "ul" : "ol";
+      if (listTag !== tag) { flush(); listTag = tag; items = []; if (number) listStart = parseInt(number[1], 10) || 1; }
+      items.push(bullet ? bullet[1] : number[2]);
+      continue;
+    }
+    flush();
+    out.push(line.trim() ? `<div class="rt-line">${esc(line)}</div>` : `<div class="rt-line blank"></div>`);
+  }
+  flush();
+  return out.join("");
+}
+
 function esc(s) { return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function progressKey(user, cardId) { return `${user}__${cardId}`; }
 function isDueProgress(p) { if (!p || !p.nextReview) return true; return new Date(p.nextReview).getTime() <= Date.now(); }
@@ -1354,8 +1475,8 @@ function renderDeck() {
     <div class="card-row" data-card-row="${c.id}" data-search-text="${esc(((c.front || "") + " " + (c.back || "")).toLocaleLowerCase("tr"))}">
       ${c.image ? `<img class="thumb" src="${esc(c.image)}" alt="">` : ""}
       <div style="flex:1;min-width:0;">
-        <div class="front">${esc(c.front)}</div>
-        <div class="back">${esc(c.back)}</div>
+        <div class="front">${esc(plainCardText(c.front))}</div>
+        <div class="back">${esc(plainCardText(c.back))}</div>
       </div>
       ${c.visibility !== "both" ? `<span class="vis-tag">${esc(c.visibility)}</span>` : ""}
       <span class="box-label mono" style="color:${STAGE_DEFS[getProgress(c.id, state.currentUser).box - 1].color};">${getProgress(c.id, state.currentUser).box}/5</span>
@@ -1496,12 +1617,12 @@ function renderStudy() {
             <span class="face-label">SORU</span>
             ${speechSupported ? `<button class="speak-btn" data-speak="${esc(card.front)}" title="Sesli oku">🔊</button>` : ""}
             ${card.image ? `<img src="${esc(card.image)}" alt="">` : ""}
-            <p class="face-text">${esc(card.front)}</p>
+            <div class="face-body"><div class="face-text">${renderCardText(card.front)}</div></div>
           </div>
           <div class="face back">
             <span class="face-label">CEVAP</span>
             ${speechSupported ? `<button class="speak-btn" data-speak="${esc(card.back)}" title="Sesli oku">🔊</button>` : ""}
-            <p class="face-text">${esc(card.back)}</p>
+            <div class="face-body"><div class="face-text">${renderCardText(card.back)}</div></div>
           </div>
         </div>
       </div>
@@ -1525,7 +1646,7 @@ function renderStudy() {
     ${header}
     <div class="mc-question">
       ${card.image ? `<img src="${esc(card.image)}" alt="">` : ""}
-      <p>${esc(card.front)}</p>
+      <div class="mc-text">${renderCardText(card.front)}</div>
       ${speechSupported ? `<button class="speak-btn-inline" data-speak="${esc(card.front)}" title="Sesli oku">🔊 Dinle</button>` : ""}
     </div>
     ${state.mcOptions.map((opt) => {
@@ -1625,10 +1746,12 @@ function renderCardFormModal() {
           </div>
 
           <label class="field-label">Ön yüz (soru)</label>
-          <textarea id="input-front" rows="2" class="autogrow">${esc(state.formFront)}</textarea>
+          <div class="rt-toolbar"><button type="button" class="rt-btn" data-rt="bullet" data-rt-target="input-front">• Madde</button><button type="button" class="rt-btn" data-rt="number" data-rt-target="input-front">1. Numara</button></div>
+          <textarea id="input-front" rows="2" class="autogrow list-editor">${esc(state.formFront)}</textarea>
 
           <label class="field-label">Arka yüz (cevap)</label>
-          <textarea id="input-back" rows="2" class="autogrow">${esc(state.formBack)}</textarea>
+          <div class="rt-toolbar"><button type="button" class="rt-btn" data-rt="bullet" data-rt-target="input-back">• Madde</button><button type="button" class="rt-btn" data-rt="number" data-rt-target="input-back">1. Numara</button></div>
+          <textarea id="input-back" rows="2" class="autogrow list-editor">${esc(state.formBack)}</textarea>
 
           <label class="field-label">Görsel (isteğe bağlı)</label>
           <input type="file" id="input-card-image" accept="image/*" style="display:none;">
@@ -1983,6 +2106,14 @@ function bindEvents() {
   document.querySelectorAll("[data-set-vis]").forEach((el) => { el.onclick = () => { state.formVisibility = el.dataset.setVis; saveLastVisibility(state.formVisibility); render(); }; });
 
   function autoGrow(el) { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 260) + "px"; }
+
+  document.querySelectorAll(".list-editor").forEach((el) => { el.onkeydown = (e) => handleListEnter(el, e); });
+  document.querySelectorAll("[data-rt]").forEach((btn) => {
+    btn.onclick = () => {
+      const el = document.getElementById(btn.dataset.rtTarget);
+      if (el) { toggleListOnSelection(el, btn.dataset.rt); autoGrow(el); }
+    };
+  });
 
   const inputFront = document.getElementById("input-front");
   if (inputFront) {
