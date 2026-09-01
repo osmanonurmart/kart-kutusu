@@ -48,7 +48,7 @@
      bu yüzden hidden özniteliği tek başına gizlemeye yetmiyordu. */
   [hidden] { display: none !important; }
   html, body { margin:0; padding:0; background:var(--bg); font-family:'Inter',system-ui,sans-serif; color:var(--metin); -webkit-tap-highlight-color:transparent; }
-  #app { max-width:480px; margin:0 auto; padding:20px 16px 60px; min-height:100vh; }
+  #app { max-width:480px; margin:0 auto; padding:20px 16px calc(60px + env(safe-area-inset-bottom)); min-height:100vh; min-height:100dvh; }
   h1,h2,h3 { font-family:'Fraunces',Georgia,serif; margin:0; }
   .mono { font-family:'IBM Plex Mono',ui-monospace,monospace; }
   .muted { color:var(--sonuk); }
@@ -114,7 +114,9 @@
   .visibility-toggle { display:flex; gap:8px; margin-bottom:16px; }
   .vis-pill { flex:1; text-align:center; padding:9px 6px; border-radius:var(--r-kucuk); background:var(--panel); border:1.5px solid var(--line); color:var(--sonuk); font-size:12.5px; font-weight:600; }
   .vis-pill.active { background:var(--mavi-yumusak); border-color:var(--mavi); color:var(--mavi); }
-  .perspective { perspective:1500px; height:300px; margin-bottom:20px; }
+  /* Kart, ekranda kalan alanı doldursun; iOS'ta adres çubuğu açılıp kapanınca
+     zıplamaması için dvh kullanılıyor (dvh desteklenmezse üstteki vh geçerli). */
+  .perspective { perspective:1500px; height:300px; height:clamp(260px, 56dvh, 460px); margin-bottom:20px; }
   .flip-inner { position:relative; width:100%; height:100%; cursor:pointer; transition:transform .6s cubic-bezier(.65,0,.35,1); transform-style:preserve-3d; }
   .flip-inner:active { transition-duration:.15s; }
   .flip-inner.flipped { transform:rotateY(180deg); }
@@ -124,7 +126,15 @@
   .face img { width:90px; height:90px; border-radius:var(--r-kucuk); object-fit:cover; margin-bottom:14px; }
   .face-text { font-family:'Fraunces',Georgia,serif; font-size:21px; font-weight:600; color:var(--metin); padding:0 8px; white-space:pre-wrap; word-break:break-word; width:100%; text-align:left; }
   /* Uzun metinlerde kart yüzü kaydırılabilir olmalı; kısa metin dikeyde ortada kalır. */
-  .face-body { width:100%; max-height:100%; overflow-y:auto; display:flex; flex-direction:column; align-items:flex-start; }
+  .face-body { position:relative; width:100%; flex:0 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; align-items:flex-start; }
+  /* 12px'te bile sığmayan kartlarda aşağısı olduğunu belli eden soluklaşma. */
+  .face.has-overflow::after, .mc-question.has-overflow::after {
+    content:""; position:absolute; left:1px; right:1px; bottom:1px; height:38px; pointer-events:none;
+    border-radius:0 0 var(--r) var(--r);
+    background:linear-gradient(to bottom, transparent, var(--panel-acik));
+  }
+  .mc-question { position:relative; }
+  .mc-text { width:100%; max-height:46dvh; overflow-y:auto; }
   .rt-list { width:100%; text-align:left; margin:0; padding-left:1.35em; }
   .rt-list li { margin:2px 0; }
   .rt-list li::marker { color:var(--sonuk); font-weight:600; }
@@ -1397,6 +1407,40 @@ function handleMcSelect(option) {
 // =========================================================================
 // RENDER
 // =========================================================================
+// --- Metni karta sığdırma ---------------------------------------------
+// Kart yüksekliği ekrana göre esnek olduğu için sığmayan metni ölçüp
+// yazı boyutunu kademeli küçültüyoruz; hâlâ taşarsa alt kenara "devamı
+// var" gölgesi konur (CSS: .has-overflow).
+const FIT_STEPS = [21, 19, 17, 15, 13.5, 12];
+const FIT_STEPS_MC = [18, 16.5, 15, 13.5, 12];
+
+function fitOne(box, textEl, steps) {
+  if (!box || !textEl) return;
+  const container = box.closest(".face") || box.closest(".mc-question") || box;
+  container.classList.remove("has-overflow");
+  for (const size of steps) {
+    textEl.style.fontSize = size + "px";
+    // Yarım pikselik yuvarlama farkları yüzünden 1px tolerans bırakılıyor.
+    if (box.scrollHeight <= box.clientHeight + 1) return;
+  }
+  container.classList.add("has-overflow");
+}
+
+function fitCardText() {
+  document.querySelectorAll(".face-body").forEach((box) => {
+    fitOne(box, box.querySelector(".face-text"), FIT_STEPS);
+  });
+  const mc = document.querySelector(".mc-text");
+  if (mc) fitOne(mc, mc, FIT_STEPS_MC);
+}
+
+// Ekran döndürüldüğünde veya klavye açılıp kapandığında kart boyu değişir.
+let fitTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(fitTimer);
+  fitTimer = setTimeout(fitCardText, 120);
+});
+
 function render() {
   if (state.view === "home") appEl.innerHTML = renderHome();
   else if (state.view === "deck") appEl.innerHTML = renderDeck();
@@ -1416,6 +1460,7 @@ function render() {
   if (state.view === "deck") applyCardSearch();
 
   bindEvents();
+  if (state.view === "study") fitCardText();
 }
 
 function renderUserSwitch() {

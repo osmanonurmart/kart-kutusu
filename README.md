@@ -38,6 +38,11 @@ Kart formundaki **• Madde** ve **1. Numara** butonları seçili satırları
 listeye çevirir (aynı butona basmak geri alır). Bir madde satırında Enter'a
 basınca sıradaki madde otomatik açılır, boş maddede Enter listeden çıkar.
 
+Çalışma ekranındaki kart, ekranda kalan alan kadar uzar (en çok 460px) ve
+metin sığmıyorsa yazı boyutu 21px'ten 12px'e kadar otomatik küçültülür.
+12px'te bile taşan kartlarda metin kaydırılabilir kalır ve alt kenarda
+soluklaşma gösterilir.
+
 ## Dışa / içe aktarma ve seviyeler
 
 Bir destede **⇩ Dışa aktar** her satırın sonuna iki kullanıcının kutu
