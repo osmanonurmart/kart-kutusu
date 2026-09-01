@@ -38,6 +38,9 @@ armut - pear - 1.5 - 2.1
 
 `1.2` = 1. kullanıcı (`USERS[0]`) 2. kutuda, `2.4` = 2. kullanıcı 4. kutuda.
 
+Kart metninde alt satır varsa dışa aktarmada tek satıra `\n` olarak
+yazılır; içe aktarırken tekrar alt satıra dönüşür.
+
 Bu metinle uygulama dışında (ör. başka bir yapay zeka ile) çalıştıktan sonra
 **bildiğin kartların seviyesinin sonuna `+` koy** ve geri içe aktar:
 
