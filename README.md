@@ -1,6 +1,7 @@
 # kart-kutusu
 
-İki kişilik, Leitner kutusu mantığıyla çalışan bir flashcard uygulaması.
+İki kişilik bir flashcard uygulaması. Deste, kişiye özel ve bir kez
+karıştırılmış sabit bir sırada dolaşılır; nerede bırakırsan oradan devam eder.
 Tamamı tek bir `index.html` dosyası; veriler Firebase Firestore'da tutulur.
 
 ## Çalıştırma
@@ -16,7 +17,7 @@ Kod dosyasında **hiç veri yok**. Her şey Firestore'da, dört koleksiyonda dur
 | `decks` | Deste adları |
 | `cards` | Kartlar (`deckId`, `front`, `back`, `visibility`, `image`) |
 | `progress` | Kişi başı ilerleme. Doküman id'si `<kullanıcı>__<cardId>` |
-| `stats` | Kişi başı seri ve toplam tekrar. Doküman id'si = kullanıcı adı |
+| `stats` | Kişi başı toplam tekrar ve deste sıraları (`rotations`). Doküman id'si = kullanıcı adı |
 
 Arayüzde değişiklik yapmak veriye dokunmaz. Ancak şunları değiştirmek
 mevcut kayıtları sahipsiz bırakır ve ayrıca bir taşıma gerektirir:
@@ -65,8 +66,8 @@ Bu metinle uygulama dışında (ör. başka bir yapay zeka ile) çalıştıktan 
 elma - apple - 1.2+ - 2.4
 ```
 
-İçe aktarmada `+` işaretli her kullanıcının kutusu bir üste çıkar, tekrar
-tarihi yeni kutuya göre ileri alınır.
+İçe aktarmada `+` işaretli her kullanıcının `streak` sayacı bir artar, yani
+kart bir seviye yukarı çıkar.
 
 **Önemli:** `+` konmayan sayılar yalnızca bilgi amaçlıdır, içe aktarmada
 **dikkate alınmaz**. Sayıyı elle değiştirmenin bir etkisi olmaz — ilerlemeyi
@@ -128,11 +129,31 @@ Tek istisna: sarı dolu zemin üzerine beyaz metin ~2:1 kontrast verdiği için
 okunmuyordu. Sarı butonlar bunun yerine paletin kendi öngördüğü yumuşak
 zemin + tam renk kenarlık/metin biçimini kullanıyor.
 
-## Tekrar aralıkları
+## Deste sırası
 
-Kutu 1 → aynı gün, 2 → 1 gün, 3 → 3 gün, 4 → 7 gün, 5 → 21 gün
-(`BOX_INTERVAL_DAYS`). Yanlış cevap kartı en fazla 2. kutuya indirir,
-asla yükseltmez.
+Takvim yok. Her kullanıcı için her destenin bir kez karıştırılmış **sabit
+sırası** ve bu sırada nerede kalındığını gösteren bir imleç tutulur; ikisi de
+`stats/<kullanıcı>` belgesinin `rotations` alanında durur, yani telefonla
+bilgisayar arasında da taşınır. Bir gün 100 kart, ertesi gün 20 kart
+çalışabilirsin — kaldığın yerden devam eder. Sıranın sonuna gelinince kartlar
+yeniden karışır ve tur baştan başlar.
+
+- Bilinemeyen kart sıranın **sonuna** taşınır, aynı turda bir kez daha gelir.
+- Tur ortasında eklenen kart, sıranın kalan kısmına rastgele serpiştirilir.
+- Deste ekranındaki `75/100` sayacı: sırada kalan kart / toplam kart.
+
+## Ustalaşma
+
+`progress` kaydındaki `streak` alanı arka arkaya kaç kez doğru bilindiğini
+tutar; yanlış cevap sıfırlar. `MASTER_STREAK` (5) tamamlandığında kart
+"ustalaşıldı" sayılır. Deste ekranındaki öğrenme eğrisinin altındaki düğme,
+ustalaşılan kartları o kullanıcı için ayırır: kart taşınmaz, yalnızca
+`retired` işareti konur — böylece diğer kullanıcının destesi etkilenmez.
+Ayrılan kartlar ana ekranda `<deste> · Ustalaşılanlar` olarak görünür ve
+`↩` ile geri alınabilir.
+
+1–5 kutu ölçeği yalnızca görsel bir göstergedir ve `streak`'ten türetilir:
+0→1, 1→2, 2→3, 3–4→4, 5→5.
 
 ## Klavye kısayolları (çalışma ekranı)
 

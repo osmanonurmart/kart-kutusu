@@ -76,7 +76,14 @@
   .user-pill.active { background:var(--mavi-yumusak); border-color:var(--mavi); color:var(--mavi); }
   .nav-row { display:flex; gap:8px; margin-bottom:18px; }
   .nav-btn { flex:1; padding:9px; border-radius:var(--r-kucuk); background:var(--panel); border:1px solid var(--line); color:var(--metin); font-size:13px; font-weight:600; }
-  .streak-pill { display:flex; align-items:center; gap:5px; background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:6px 12px; font-size:14px; font-weight:600; color:var(--sari); }
+  /* Destenin altındaki ustalaşılanlar listesi: aynı kart görünümünün soluk ve
+     sola girintili hâli, ana desteye bağlı olduğu anlaşılsın diye. */
+  .deck-card-sub { margin-left:14px; padding:10px 14px; opacity:.82; }
+  .deck-card-sub .deck-name { font-size:13px; color:var(--sonuk); }
+  /* Öğrenme eğrisinin altındaki "ustalaşılanları ayır" düğmesi. */
+  .curve-action { width:100%; margin-top:12px; background:var(--kutu5); color:var(--bg); border:none; border-radius:var(--r-kucuk); padding:9px 12px; font-size:13px; font-weight:600; cursor:pointer; }
+  /* Deste bir kez baştan sona bitince çıkan bildirim. */
+  .pass-toast { background:var(--yesil-yumusak); border:1px solid var(--yesil); color:var(--yesil); border-radius:var(--r-kucuk); padding:9px 12px; font-size:12.5px; line-height:1.45; margin:10px 0 4px; text-align:center; }
   .deck-card { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:16px; margin-bottom:12px; cursor:pointer; }
   .deck-name { font-size:18px; font-weight:600; }
   .due-badge { font-size:12px; font-weight:600; padding:2px 8px; border-radius:999px; background:var(--mavi-yumusak); color:var(--mavi); white-space:nowrap; }
@@ -232,7 +239,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-app.js";
 import {
   initializeFirestore, getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc, getDoc,
-  onSnapshot, writeBatch, persistentLocalCache, persistentMultipleTabManager,
+  onSnapshot, writeBatch, deleteField, persistentLocalCache, persistentMultipleTabManager,
 } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-firestore.js";
 
 // =========================================================================
@@ -291,13 +298,13 @@ const progressCol = collection(db, "progress");
 const statsCol = collection(db, "stats");
 
 // ---------- constants ----------
-// Kutu başına tekrar aralığı (gün). Index = kutu numarası, 0 kullanılmıyor.
-// Aralıklar kutu yükseldikçe artmalı: 5. kutu eskiden 3 gündü, yani ustalaşılan
-// kart 4. kutudakinden (7 gün) daha sık geliyordu — düzeltildi.
-const BOX_INTERVAL_DAYS = [0, 0, 1, 3, 7, 21];
+// Kutu ölçeği artık takvimle ilgili değil, sadece görsel bir gösterge:
+// 1 = yeni, 5 = ustalaşıldı. Kartın ne zaman geleceğini tarih değil, destenin
+// sabit karışık sırası belirler (aşağıdaki "deste sırası" bölümüne bak).
 const MAX_BOX = 5;
-const MASTERED_SESSION_CAP = 5;
-const PAUSED_SESSION_KEY = "flashcard-paused-session";
+// Bir kartın "ustalaşıldı" sayılması için arka arkaya kaç kez doğru bilinmesi
+// gerektiği. Arada bir kez bilinemezse sayaç sıfırdan başlar.
+const MASTER_STREAK = 5;
 // Kart görseli: Firestore doküman sınırı 1MB olduğu için küçültülerek saklanır.
 const IMAGE_MAX_SIDE = 480;
 const IMAGE_QUALITY = 0.72;
@@ -305,7 +312,7 @@ const IMAGE_MAX_BYTES = 600 * 1024;
 
 // ---------- helpers ----------
 function todayStr() { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
-function daysAgoStr(n) { const d = new Date(); d.setDate(d.getDate() - n); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
+
 // --- Kart metni biçimlendirme -----------------------------------------
 // Metin Firestore'da düz metin olarak durur ("- elma"); listeye yalnızca
 // ekranda çevrilir. Böylece yedek, dışa aktarma ve arama değişmez.
@@ -419,7 +426,32 @@ function renderCardText(text) {
 
 function esc(s) { return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function progressKey(user, cardId) { return `${user}__${cardId}`; }
-function isDueProgress(p) { if (!p || !p.nextReview) return true; return new Date(p.nextReview).getTime() <= Date.now(); }
+// Diziyi yerinde değil, kopyasını karıştırır (Fisher-Yates). Eskiden
+// `sort(() => Math.random() - 0.5)` kullanılıyordu; o yöntem karşılaştırma
+// tutarsız olduğu için sıraları eşit olasılıkla dağıtmaz.
+function shuffled(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Eski kayıtlarda `streak` alanı yok, sadece `box` var. Tek seferlik bir göç
+// yazmak yerine okurken çeviriyoruz: kutu 5 zaten ustalaşılmış demekti, diğer
+// kutular da bir eksiğine denk geliyor. Kayıt bir sonraki yazmada güncellenir.
+function streakOf(p) {
+  if (!p) return 0;
+  if (typeof p.streak === "number") return p.streak;
+  const b = p.box || 1;
+  return b >= MAX_BOX ? MASTER_STREAK : Math.max(0, b - 1);
+}
+// Arka arkaya doğru sayısını ekrandaki 1–5 kutu ölçeğine çevirir. 5. kutu
+// yalnızca gerçekten ustalaşılmış kartlara ayrılmıştır.
+function boxFromStreak(streak) {
+  return streak >= MASTER_STREAK ? MAX_BOX : Math.min(MAX_BOX - 1, streak + 1);
+}
 
 function loadCurrentUser() {
   const saved = localStorage.getItem("flashcard-user");
@@ -460,7 +492,11 @@ const state = {
   formVisibility: "both", // 'both' | user name
   focusFrontOnOpen: false,
   studyMode: "flip",
-  studyOrder: localStorage.getItem("flashcard-study-order") || "shuffled", // 'shuffled' | 'sequential'
+  viewRetired: false,     // deste ekranı ustalaşılanlar listesini mi gösteriyor
+  studyScope: null,       // çalışılan kapsam: deste id'si ya da "<id>::retired"
+  rotation: null,         // { order:[kart id], pos:n } — destenin sabit sırası
+  requeueCurrent: false,  // bilinemeyen kart sıranın sonuna taşınacak mı
+  passToast: false,       // "deste bitti, baştan başlıyoruz" bildirimi
   queue: [],
   qIndex: 0,
   flipped: false,
@@ -606,8 +642,20 @@ const hasKeyboard = typeof window !== "undefined" && window.matchMedia && window
 function keyboardHint() { return hasKeyboard ? " · <b>Boşluk</b>" : ""; }
 
 // ---------- progress / stats helpers ----------
+// Kartın bir kullanıcı için ilerlemesi. Ham kayıt hangi biçimde olursa olsun
+// buradan hep aynı şekilde döner: streak (arka arkaya doğru sayısı), ondan
+// türetilen kutu ve kartın ustalaşılanlara ayrılıp ayrılmadığı.
 function getProgress(cardId, user) {
-  return progressList.find((p) => p.cardId === cardId && p.user === user) || { box: 1, nextReview: null, correctCount: 0, wrongCount: 0 };
+  const raw = progressList.find((p) => p.cardId === cardId && p.user === user) || {};
+  const streak = streakOf(raw);
+  return {
+    ...raw,
+    streak,
+    box: boxFromStreak(streak),
+    retired: !!raw.retired,
+    correctCount: raw.correctCount || 0,
+    wrongCount: raw.wrongCount || 0,
+  };
 }
 function getStats(user) {
   return statsList.find((s) => s.id === user) || { streak: 0, lastStudyDate: null, totalReviewed: 0 };
@@ -621,16 +669,16 @@ function visibleCards(deckId, user) {
 function allVisibleCards(user) {
   return cards.filter((c) => c.visibility === "both" || c.visibility === user);
 }
-// Ekranda gösterilecek güncel seri. Kayıtlı streak yalnızca seans bitince
-// güncellendiği için, aradan gün geçmişse ekranda bayat kalıyordu.
-function currentStreak(user) {
-  const s = getStats(user);
-  if (!s.streak || !s.lastStudyDate) return 0;
-  if (s.lastStudyDate === todayStr() || s.lastStudyDate === daysAgoStr(1)) return s.streak;
-  return 0; // seri kopmuş
-}
 function masteredCountFor(user) {
-  return progressList.filter((p) => p.user === user && p.box >= MAX_BOX).length;
+  return progressList.filter((p) => p.user === user && streakOf(p) >= MASTER_STREAK).length;
+}
+// Bir destede ustalaşılmış ama henüz ayrılmamış kartlar. "Ustalaşılanlara
+// gönder" düğmesi bunlar üzerinde çalışır.
+function masteredNotRetired(deckId, user) {
+  return visibleCards(deckId, user).filter((c) => {
+    const p = getProgress(c.id, user);
+    return !p.retired && p.streak >= MASTER_STREAK;
+  });
 }
 function levelFor(masteredCount) {
   if (masteredCount < 15) return "Başlangıç";
@@ -646,9 +694,13 @@ const STAGE_DEFS = [
   { box: 4, label: "İyi", color: "var(--kutu4)" },
   { box: 5, label: "Ustalaştı", color: "var(--kutu5)" },
 ];
-function renderLearningCurve(cardList, user, title) {
+// retireDeckId verilirse, grafiğin altına "ustalaşılanları ayır" düğmesi
+// eklenir. Yalnızca deste ekranında gösterilir; istatistik ekranında birden
+// çok destenin kartı bir arada olduğu için orada anlamlı olmaz.
+function renderLearningCurve(cardList, user, title, retireDeckId) {
   const counts = STAGE_DEFS.map((s) => cardList.filter((c) => getProgress(c.id, user).box === s.box).length);
   const max = Math.max(1, ...counts);
+  const retirable = retireDeckId ? masteredNotRetired(retireDeckId, user).length : 0;
   return `
     <div class="curve-box">
       <div class="curve-title">${esc(title || "Öğrenme eğrisi")}</div>
@@ -660,7 +712,103 @@ function renderLearningCurve(cardList, user, title) {
           </div>`).join("")}
       </div>
       <div class="curve-labels">${STAGE_DEFS.map((s) => `<div class="curve-label" style="color:${s.color};">${esc(s.label)}</div>`).join("")}</div>
+      ${retirable > 0 ? `<button class="curve-action" data-retire-deck="${retireDeckId}">↗ ${retirable} ustalaşılan kartı ayır</button>` : ""}
     </div>`;
+}
+
+// =========================================================================
+// DESTE SIRASI (ROTASYON)
+// Her kullanıcı için her destede, kartların bir kez karıştırılmış SABİT sırası
+// ve bu sırada nerede kalındığını gösteren bir imleç tutulur. Takvim yoktur:
+// bir gün 100 kart, ertesi gün 20 kart çalışabilirsin; nerede bıraktıysan
+// oradan devam eder. Sıranın sonuna gelince kartlar yeniden karışır ve baştan
+// başlar.
+//
+// Nerede duruyor: stats/{kullanıcı} belgesinin `rotations` alanında. Ayrı bir
+// koleksiyon açmamak Firestore kurallarını değiştirmeyi gereksiz kılıyor.
+// Firestore'da durduğu için imleç telefonla bilgisayar arasında da taşınır.
+//
+// "Kapsam" (scope): normal deste için deste id'si, o destenin ustalaşılanlar
+// listesi için "<desteId>::retired".
+// =========================================================================
+const RETIRED_SUFFIX = "::retired";
+function scopeOf(deckId, retired) { return retired ? deckId + RETIRED_SUFFIX : deckId; }
+function scopeDeckId(scope) { return scope.endsWith(RETIRED_SUFFIX) ? scope.slice(0, -RETIRED_SUFFIX.length) : scope; }
+function scopeIsRetired(scope) { return scope.endsWith(RETIRED_SUFFIX); }
+
+// Bir kapsamdaki kartlar: ayrılan kartlar ana desteden düşer, ustalaşılanlar
+// listesinde ise yalnızca onlar bulunur.
+function scopeCards(scope, user) {
+  const retired = scopeIsRetired(scope);
+  return visibleCards(scopeDeckId(scope), user).filter((c) => getProgress(c.id, user).retired === retired);
+}
+
+// Kayıtlı sırayı destenin güncel içeriğiyle uzlaştırır:
+//  - silinen veya ayrılan kartlar sıradan düşer; imleç kaymasın diye bunların
+//    kaç tanesinin imleçten önce olduğu sayılır
+//  - yeni kartlar sıranın KALAN kısmına rastgele serpiştirilir, yani
+//    eklendikleri turda karşına çıkarlar
+function getRotation(scope, user) {
+  const saved = (getStats(user).rotations || {})[scope];
+  const ids = scopeCards(scope, user).map((c) => c.id);
+  if (!saved || !Array.isArray(saved.order)) return { order: shuffled(ids), pos: 0, dirty: true };
+
+  const live = new Set(ids);
+  const savedPos = Math.max(0, Math.min(saved.pos || 0, saved.order.length));
+  const order = [];
+  let pos = 0;
+  let dropped = 0;
+  saved.order.forEach((id, i) => {
+    if (!live.has(id)) { dropped++; return; }
+    if (i < savedPos) pos++;
+    order.push(id);
+  });
+
+  const known = new Set(order);
+  const fresh = ids.filter((id) => !known.has(id));
+  for (const id of fresh) {
+    const at = pos + Math.floor(Math.random() * (order.length - pos + 1));
+    order.splice(at, 0, id);
+  }
+  return { order, pos, dirty: dropped > 0 || fresh.length > 0 };
+}
+
+// Sırayı hem yerel kopyaya (ekran anında güncellensin) hem Firestore'a yazar.
+async function saveRotation(scope, user, rot) {
+  const value = { order: [...rot.order], pos: rot.pos };
+  const s = statsList.find((x) => x.id === user);
+  if (s) s.rotations = { ...(s.rotations || {}), [scope]: value };
+  else statsList.push({ id: user, rotations: { [scope]: value } });
+  try {
+    await setDoc(doc(db, "stats", user), { rotations: { [scope]: value } }, { merge: true });
+  } catch (err) {
+    console.error("Deste sırası kaydedilemedi:", err);
+  }
+}
+
+// Deste silinince kayıtlı sırası da her kullanıcıdan temizlenir, yoksa
+// stats belgesinde hiç okunmayacak ölü kayıtlar birikir.
+async function clearRotations(deckId) {
+  const scopes = [scopeOf(deckId, false), scopeOf(deckId, true)];
+  for (const user of USERS) {
+    const s = statsList.find((x) => x.id === user);
+    if (s && s.rotations) for (const sc of scopes) delete s.rotations[sc];
+    try {
+      await setDoc(doc(db, "stats", user), {
+        rotations: Object.fromEntries(scopes.map((sc) => [sc, deleteField()])),
+      }, { merge: true });
+    } catch (err) {
+      console.error("Deste sırası temizlenemedi:", err);
+    }
+  }
+}
+
+// Deste ekranındaki "kalan / toplam" sayacı. Sıra bittiyse yeni tur baştan
+// başlayacağı için kalan = toplam gösterilir.
+function rotationCounts(scope, user) {
+  const rot = getRotation(scope, user);
+  const total = rot.order.length;
+  return { remaining: total === 0 || rot.pos >= total ? total : total - rot.pos, total };
 }
 
 // ---------- firestore CRUD ----------
@@ -679,9 +827,8 @@ async function deleteDeck(deckId, deckName) {
   deckCardIds.forEach((id) => batch.delete(doc(db, "cards", id)));
   progressList.filter((p) => deckCardIds.includes(p.cardId)).forEach((p) => batch.delete(doc(db, "progress", p.id)));
   await batch.commit();
-  const paused = loadPausedSession();
-  if (paused && paused.deckId === deckId) clearPausedSession();
-  if (state.activeDeckId === deckId) { state.view = "home"; state.activeDeckId = null; }
+  await clearRotations(deckId);
+  if (state.activeDeckId === deckId) { state.view = "home"; state.activeDeckId = null; state.viewRetired = false; }
   render();
 }
 
@@ -713,20 +860,52 @@ async function saveCardForm() {
   }
 }
 
+// Kart satırındaki noktalara basınca seviyeyi elle ayarlar. Kutu artık
+// streak'ten türediği için ters çevrilip streak yazılır; 5. kutu = ustalaşıldı.
 async function setBoxManually(cardId, box) {
   const user = state.currentUser;
   const key = progressKey(user, cardId);
-  const existingDoc = progressList.find((p) => p.id === key);
-  const cur = existingDoc || { correctCount: 0, wrongCount: 0 };
-  const days = BOX_INTERVAL_DAYS[box] ?? 0;
-  const d = new Date(); d.setDate(d.getDate() + days);
-  const nextReview = days === 0 ? new Date().toISOString() : d.toISOString();
+  const cur = getProgress(cardId, user);
+  const streak = box >= MAX_BOX ? MASTER_STREAK : Math.max(0, box - 1);
   const card = cards.find((c) => c.id === cardId);
   await setDoc(doc(db, "progress", key), {
-    box, nextReview,
-    correctCount: cur.correctCount || 0, wrongCount: cur.wrongCount || 0,
+    streak, box: boxFromStreak(streak), retired: cur.retired,
+    correctCount: cur.correctCount, wrongCount: cur.wrongCount,
     user, cardId, deckId: card ? card.deckId : state.activeDeckId, updatedAt: Date.now(),
   }, { merge: false });
+}
+
+// Ustalaşılan kartları bu kullanıcı için ana desteden ayırır. Kart fiziksel
+// olarak taşınmaz, yalnızca bu kullanıcının ilerleme kaydına işaret konur —
+// böylece diğer kullanıcının destesi hiç etkilenmez.
+async function retireMastered(deckId) {
+  const user = state.currentUser;
+  const targets = masteredNotRetired(deckId, user);
+  if (targets.length === 0) return;
+  if (!confirm(`${targets.length} ustalaşılan kart "Ustalaşılanlar" listesine ayrılacak ve ana destede artık karşına çıkmayacak. Devam edilsin mi?`)) return;
+  await setRetired(targets, user, true);
+}
+
+// Ayrılan kartı ana desteye geri döndürür.
+async function unretireCard(cardId) {
+  const card = cards.find((c) => c.id === cardId);
+  if (card) await setRetired([card], state.currentUser, false);
+}
+
+async function setRetired(cardList, user, retired) {
+  for (let i = 0; i < cardList.length; i += 400) {
+    const batch = writeBatch(db);
+    for (const c of cardList.slice(i, i + 400)) {
+      const p = getProgress(c.id, user);
+      batch.set(doc(db, "progress", progressKey(user, c.id)), {
+        streak: p.streak, box: boxFromStreak(p.streak), retired,
+        correctCount: p.correctCount, wrongCount: p.wrongCount,
+        user, cardId: c.id, deckId: c.deckId, updatedAt: Date.now(),
+      }, { merge: false });
+    }
+    await batch.commit();
+  }
+  render();
 }
 
 async function deleteCard(cardId) {
@@ -856,13 +1035,12 @@ async function applyImportBumps(parsed, existing, newCardIds) {
     for (const user of row.bumps) {
       const progKey = progressKey(user, cardId);
       const cur = progressList.find((p) => p.id === progKey);
-      const box = Math.min(MAX_BOX, (cur && cur.box ? cur.box : 1) + 1);
-      const days = BOX_INTERVAL_DAYS[box] ?? 0;
-      const d = new Date(); d.setDate(d.getDate() + days);
+      const streak = Math.min(MASTER_STREAK, streakOf(cur) + 1);
       if (writes.has(progKey)) continue;
       writes.set(progKey, {
-        box,
-        nextReview: days === 0 ? new Date().toISOString() : d.toISOString(),
+        streak,
+        box: boxFromStreak(streak),
+        retired: !!(cur && cur.retired),
         correctCount: (cur && cur.correctCount) || 0,
         wrongCount: (cur && cur.wrongCount) || 0,
         user, cardId, deckId: state.activeDeckId, updatedAt: Date.now(),
@@ -1213,97 +1391,95 @@ function buildMcOptions(card) {
   if (!card) return [];
   const pool = visibleCards(card.deckId, state.currentUser);
   const others = pool.filter((c) => c.id !== card.id && c.back.trim() !== card.back.trim());
-  const shuffled = [...others].sort(() => Math.random() - 0.5).slice(0, 3);
-  return [...shuffled.map((c) => c.back), card.back].sort(() => Math.random() - 0.5);
-}
-function deckSupportsMc(deckId, user) {
-  const dc = visibleCards(deckId, user);
-  const distinctBacks = new Set(dc.map((c) => c.back.trim()));
-  return dc.length >= 2 && distinctBacks.size >= 2;
-}
-function dueCardsCapped(pool, user) {
-  const due = pool.filter((c) => isDueProgress(getProgress(c.id, user)));
-  const mastered = due.filter((c) => getProgress(c.id, user).box === MAX_BOX);
-  const others = due.filter((c) => getProgress(c.id, user).box !== MAX_BOX);
-  if (mastered.length > MASTERED_SESSION_CAP) {
-    mastered.sort((a, b) => {
-      const pa = getProgress(a.id, user).nextReview || "";
-      const pb = getProgress(b.id, user).nextReview || "";
-      return pa.localeCompare(pb);
-    });
-    return [...others, ...mastered.slice(0, MASTERED_SESSION_CAP)];
-  }
-  return [...others, ...mastered];
-}
-function startStudy(mode, all) {
-  const pool = visibleCards(state.activeDeckId, state.currentUser);
-  let due = all ? pool : dueCardsCapped(pool, state.currentUser);
-  if (due.length === 0) due = pool;
-  if (due.length === 0) return;
-  state.queue = state.studyOrder === "sequential"
-    ? [...due].sort((a, b) => a.front.localeCompare(b.front, "tr"))
-    : [...due].sort(() => Math.random() - 0.5);
-  commitSessionStats(); // önceki seanstan işlenmemiş tekrar kaldıysa yaz
-  state.qIndex = 0; state.flipped = false;
-  state.sessionCorrect = 0; state.sessionWrong = 0; state.sessionReviewed = 0;
-  state.studyMode = mode; state.mcSelected = null; state.lastAction = null;
-  if (mode === "mc") state.mcOptions = buildMcOptions(state.queue[0]);
-  state.view = "study"; render();
-}
-function advanceQueue() {
-  const next = state.qIndex + 1;
-  if (next >= state.queue.length) { finishSession(); return; }
-  state.qIndex = next; state.flipped = false; state.mcSelected = null;
-  if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[next]);
-  render();
+  const wrong = shuffled(others).slice(0, 3);
+  return shuffled([...wrong.map((c) => c.back), card.back]);
 }
 
-// ---------- pause / resume a study session ----------
-function saveSessionSnapshot() {
-  if (state.view !== "study" || !state.queue.length) return;
-  const snap = {
-    deckId: state.activeDeckId, user: state.currentUser, mode: state.studyMode,
-    cardIds: state.queue.map((c) => c.id), qIndex: state.qIndex,
-    sessionCorrect: state.sessionCorrect, sessionWrong: state.sessionWrong, savedAt: Date.now(),
-  };
-  localStorage.setItem(PAUSED_SESSION_KEY, JSON.stringify(snap));
-}
-function loadPausedSession() {
-  try {
-    const raw = localStorage.getItem(PAUSED_SESSION_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
-}
-function clearPausedSession() { localStorage.removeItem(PAUSED_SESSION_KEY); }
-function resumeSession() {
-  const snap = loadPausedSession();
-  if (!snap) return;
-  const restoredQueue = snap.cardIds.map((id) => cards.find((c) => c.id === id)).filter(Boolean);
-  if (restoredQueue.length === 0) { clearPausedSession(); return; }
-  state.queue = restoredQueue;
-  state.qIndex = Math.min(snap.qIndex, restoredQueue.length - 1);
-  state.studyMode = snap.mode;
-  state.sessionCorrect = snap.sessionCorrect || 0;
-  state.sessionWrong = snap.sessionWrong || 0;
-  state.sessionReviewed = 0; // duraklatırken zaten istatistiğe işlenmişti
-  state.flipped = false; state.mcSelected = null; state.lastAction = null;
-  if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
+// Çalışma her zaman destenin sabit karışık sırası üzerinden gider: kuyruk
+// sıranın tamamıdır, imleç sırada nerede olduğumuzu gösterir. Bu yüzden
+// çıkıp geri geldiğinde kaldığın yerden devam edersin.
+function startStudy(mode) {
+  const user = state.currentUser;
+  const scope = scopeOf(state.activeDeckId, state.viewRetired);
+  let rot = getRotation(scope, user);
+  if (rot.order.length === 0) return;
+  // Sıra bir önceki oturumda bitmişse yeni tur baştan başlar.
+  if (rot.pos >= rot.order.length) rot = { order: shuffled(rot.order), pos: 0, dirty: true };
+  if (rot.dirty) saveRotation(scope, user, rot);
+
+  commitSessionStats(); // önceki seanstan işlenmemiş tekrar kaldıysa yaz
+  state.studyScope = scope;
+  state.rotation = rot;
+  state.qIndex = rot.pos;
+  syncQueueFromRotation();
+  state.flipped = false;
+  state.sessionCorrect = 0; state.sessionWrong = 0; state.sessionReviewed = 0;
+  state.studyMode = mode; state.mcSelected = null; state.lastAction = null;
+  state.requeueCurrent = false; state.passToast = false;
+  if (mode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
   state.view = "study"; render();
 }
-function stopSession() {
-  saveSessionSnapshot();
-  commitSessionStats();   // yarım seansta yapılan tekrarlar da sayılsın
-  state.view = "deck"; render();
+
+// Kuyruğu sıradaki id'lerden yeniden kurar. Kart araya silinmişse (örneğin
+// diğer kullanıcı silmişse) sıradan da düşürülür.
+function syncQueueFromRotation() {
+  const rot = state.rotation;
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  rot.order = rot.order.filter((id) => byId.has(id));
+  state.queue = rot.order.map((id) => byId.get(id));
+  if (state.qIndex >= state.queue.length) state.qIndex = Math.max(0, state.queue.length - 1);
 }
+
+// Bir kart cevaplandıktan sonra sırada ilerler.
+//  - Bilinemeyen kart sıranın SONUNA taşınır; imleç yerinde kalır, çünkü
+//    sıradaki kart açılan boşluğa kaymıştır.
+//  - Sıranın sonuna gelinince kartlar yeniden karışır, tur baştan başlar.
+function advanceQueue() {
+  const rot = state.rotation;
+  if (state.requeueCurrent) {
+    const [id] = rot.order.splice(state.qIndex, 1);
+    rot.order.push(id);
+    state.requeueCurrent = false;
+    syncQueueFromRotation();
+  } else {
+    state.qIndex++;
+  }
+
+  let wrapped = false;
+  if (state.qIndex >= rot.order.length) {
+    rot.order = shuffled(scopeCards(state.studyScope, state.currentUser).map((c) => c.id));
+    state.qIndex = 0;
+    wrapped = true;
+    syncQueueFromRotation();
+  }
+  rot.pos = state.qIndex;
+  saveRotation(state.studyScope, state.currentUser, rot);
+
+  if (state.queue.length === 0) { finishSession(); return; }
+  state.passToast = wrapped;
+  state.flipped = false; state.mcSelected = null;
+  if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
+  render();
+  if (wrapped) setTimeout(() => {
+    if (!state.passToast) return;
+    state.passToast = false;
+    if (state.view === "study") render();
+  }, 3200);
+}
+
 function deleteStudyCard() {
   const card = state.queue[state.qIndex];
   if (!card) return;
   if (!confirm(`"${card.front}" kartını silmek istiyor musun?`)) return;
   deleteCard(card.id);
-  state.queue.splice(state.qIndex, 1);
-  state.flipped = false; state.mcSelected = null;
-  if (state.queue.length === 0) { clearPausedSession(); state.view = "deck"; render(); return; }
+  const rot = state.rotation;
+  rot.order = rot.order.filter((id) => id !== card.id);
+  syncQueueFromRotation();
+  if (state.queue.length === 0) { state.view = "deck"; render(); return; }
   if (state.qIndex >= state.queue.length) state.qIndex = state.queue.length - 1;
+  rot.pos = state.qIndex;
+  saveRotation(state.studyScope, state.currentUser, rot);
+  state.flipped = false; state.mcSelected = null;
   if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
   render();
 }
@@ -1316,14 +1492,12 @@ async function commitSessionStats() {
   if (reviewed <= 0) return;
   state.sessionReviewed = 0;
   const s = getStats(state.currentUser);
-  const today = todayStr();
-  const updated = { ...s };
-  delete updated.id;
-  if (updated.lastStudyDate !== today) {
-    updated.streak = updated.lastStudyDate === daysAgoStr(1) ? (updated.streak || 0) + 1 : 1;
-    updated.lastStudyDate = today;
-  }
-  updated.totalReviewed = (updated.totalReviewed || 0) + reviewed;
+  // Yalnızca değişen alanlar yazılır. `rotations` bilerek dışarıda bırakıldı:
+  // sırayı saveRotation yönetiyor, buradan bayat bir kopyayla ezilmemeli.
+  const updated = {
+    lastStudyDate: todayStr(),
+    totalReviewed: (s.totalReviewed || 0) + reviewed,
+  };
   try {
     await setDoc(doc(db, "stats", state.currentUser), updated, { merge: true });
   } catch (err) {
@@ -1333,7 +1507,6 @@ async function commitSessionStats() {
 }
 
 async function finishSession() {
-  clearPausedSession();
   await commitSessionStats();
   state.view = "summary"; render();
 }
@@ -1344,34 +1517,36 @@ async function applyReview(card, action) {
   const key = progressKey(user, card.id);
   const existingDoc = progressList.find((p) => p.id === key);
   const prev = existingDoc ? { ...existingDoc } : null;
-  const cur = prev || { box: 1, nextReview: null, correctCount: 0, wrongCount: 0 };
+  const cur = getProgress(card.id, user);
 
-  let box = cur.box, nextReview, correctDelta = 0, wrongDelta = 0;
+  // Tarih ve kutu yerine "arka arkaya kaç kez doğru bildim" sayacı güncellenir.
+  let streak = cur.streak, correctDelta = 0, wrongDelta = 0;
   if (action === "wrong") {
-    // En fazla 2. seviyeye iner ama ASLA yükselmez: eskiden kutu 1'deki yeni
-    // bir kartı bilememek onu kutu 2'ye terfi ettirip yarına erteliyordu.
-    box = Math.min(cur.box || 1, 2);
-    const days = BOX_INTERVAL_DAYS[box] ?? 1;
-    const d = new Date(); d.setDate(d.getDate() + days);
-    nextReview = days === 0 ? new Date().toISOString() : d.toISOString();
+    streak = 0;               // seri kopar, kart en baştan öğrenilir
     wrongDelta = 1;
   } else if (action === "know") {
-    box = Math.min(MAX_BOX, cur.box + 1);
-    const days = BOX_INTERVAL_DAYS[box] ?? 0;
-    const d = new Date(); d.setDate(d.getDate() + days);
-    nextReview = days === 0 ? new Date().toISOString() : d.toISOString();
+    streak = Math.min(MASTER_STREAK, streak + 1);
     correctDelta = 1;
   } else if (action === "master") {
-    box = MAX_BOX;
-    const days = BOX_INTERVAL_DAYS[MAX_BOX] ?? 0;
-    const d = new Date(); d.setDate(d.getDate() + days);
-    nextReview = d.toISOString();
+    streak = MASTER_STREAK;   // "kesin öğrendim" doğrudan ustalaşmış sayar
     correctDelta = 1;
   }
-  const next = { box, nextReview, correctCount: (cur.correctCount || 0) + correctDelta, wrongCount: (cur.wrongCount || 0) + wrongDelta, user, cardId: card.id, deckId: card.deckId, updatedAt: Date.now() };
+  const next = {
+    streak, box: boxFromStreak(streak), retired: cur.retired,
+    correctCount: cur.correctCount + correctDelta,
+    wrongCount: cur.wrongCount + wrongDelta,
+    user, cardId: card.id, deckId: card.deckId, updatedAt: Date.now(),
+  };
 
-  state.lastAction = { key, prevExisted: !!existingDoc, prevData: prev, queueIndex: state.qIndex, correctDelta, wrongDelta };
+  state.lastAction = {
+    key, prevExisted: !!existingDoc, prevData: prev,
+    queueIndex: state.qIndex, correctDelta, wrongDelta,
+    // Bilinemeyen kart sıranın sonuna taşınacağı için sıranın o anki hâli de
+    // saklanır; geri al bunu olduğu gibi yerine koyar.
+    rotOrder: [...state.rotation.order],
+  };
   await setDoc(doc(db, "progress", key), next, { merge: false });
+  state.requeueCurrent = action === "wrong";
   if (action === "wrong") state.sessionWrong++; else state.sessionCorrect++;
   state.sessionReviewed++;
 }
@@ -1381,7 +1556,12 @@ async function undoLastAction() {
   if (!a) return;
   if (a.prevExisted) await setDoc(doc(db, "progress", a.key), a.prevData, { merge: false });
   else await deleteDoc(doc(db, "progress", a.key));
+  state.rotation.order = [...a.rotOrder];
+  state.rotation.pos = a.queueIndex;
   state.qIndex = a.queueIndex;
+  state.requeueCurrent = false;
+  syncQueueFromRotation();
+  saveRotation(state.studyScope, state.currentUser, state.rotation);
   state.sessionCorrect -= a.correctDelta;
   state.sessionWrong -= a.wrongDelta;
   if (state.sessionReviewed > 0) state.sessionReviewed--;
@@ -1398,6 +1578,8 @@ function handleFlipAnswer(action) {
 function goToPreviousCard() {
   if (state.qIndex === 0) return;
   state.qIndex--;
+  state.rotation.pos = state.qIndex;
+  saveRotation(state.studyScope, state.currentUser, state.rotation);
   state.flipped = false; state.mcSelected = null;
   if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
   render();
@@ -1463,7 +1645,6 @@ function render() {
   if (state.showBackup) appEl.insertAdjacentHTML("beforeend", renderBackupModal());
   if (state.showPracticeSetup) appEl.insertAdjacentHTML("beforeend", renderPracticeSetupModal());
 
-  if (state.view === "study") saveSessionSnapshot();
   if (state.view === "deck") applyCardSearch();
 
   bindEvents();
@@ -1483,7 +1664,7 @@ function renderHome() {
     ${renderUserSwitch()}
     <div class="top-row">
       <div class="brand"><svg class="app-logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kart Kutusu"> <g transform="rotate(-13 26 22)"><rect x="15" y="7" width="22" height="30" rx="4" fill="#e9eefb"/><rect x="19" y="13" width="14" height="2.6" rx="1.3" fill="#93a3bd"/><rect x="19" y="19" width="10" height="2.6" rx="1.3" fill="#93a3bd"/></g> <g transform="rotate(11 38 20)"><rect x="27" y="5" width="22" height="30" rx="4" fill="#eab308"/><rect x="31" y="11" width="14" height="2.6" rx="1.3" fill="#7a5c04"/><rect x="31" y="17" width="10" height="2.6" rx="1.3" fill="#7a5c04"/></g> <path d="M6 30 L32 38 L32 60.4 a8 8 0 0 1 -2 -.6 L9 53.8 A4 4 0 0 1 6 50 Z" fill="#3b82f6"/> <path d="M58 30 L58 50 a4 4 0 0 1 -3 3.8 L34 59.8 a8 8 0 0 1 -2 .6 L32 38 Z" fill="#2563eb"/> <path d="M6 30 L32 22 L58 30 L32 38 Z" fill="#60a5fa"/> </svg><h1 style="font-size:28px;">Kart Kutusu</h1></div>
-      <div class="streak-pill">🔥 <span class="mono">${currentStreak(state.currentUser)}</span></div>
+
     </div>
     <p class="muted" style="font-size:14px;margin-bottom:14px;">${myCards.length} kart · ${totalMastered} tanesi ustalaşıldı (${esc(state.currentUser)})</p>
     <div class="nav-row">
@@ -1493,35 +1674,52 @@ function renderHome() {
     <button class="btn btn-primary" id="btn-new-deck" style="margin-bottom:20px;">+ Yeni deste</button>
     ${decks.length === 0 ? `<div class="empty-state">Henüz deste yok. İlk desteni oluştur.</div>` : ""}
     ${decks.map((deck) => {
-      const dc = visibleCards(deck.id, state.currentUser);
-      const due = dc.filter((c) => isDueProgress(getProgress(c.id, state.currentUser))).length;
-      const mastered = dc.filter((c) => getProgress(c.id, state.currentUser).box >= MAX_BOX).length;
+      const user = state.currentUser;
+      const dc = scopeCards(deck.id, user);
+      const { remaining, total } = rotationCounts(deck.id, user);
+      const mastered = dc.filter((c) => getProgress(c.id, user).box >= MAX_BOX).length;
       const pct = dc.length ? Math.round((mastered / dc.length) * 100) : 0;
+      // Ayrılmış kartlar varsa destenin hemen altında ayrı bir kart olarak
+      // görünürler; kişiye özel olduğu için yalnızca ayıran kullanıcı görür.
+      const retiredCount = scopeCards(scopeOf(deck.id, true), user).length;
       return `
         <div class="deck-card" data-open-deck="${deck.id}">
           <div class="row">
             <div class="deck-name">${esc(deck.name)}</div>
-            ${due > 0 ? `<span class="due-badge">${due} tekrar</span>` : ""}
+            ${total > 0 ? `<span class="due-badge">${remaining}/${total}</span>` : ""}
           </div>
           <p class="muted" style="font-size:12px;margin-top:4px;">${dc.length} kart · %${pct} ustalaşıldı</p>
           <div class="progress-track"><div class="progress-fill" style="width:${pct}%;"></div></div>
-        </div>`;
+        </div>
+        ${retiredCount > 0 ? `
+        <div class="deck-card deck-card-sub" data-open-retired="${deck.id}">
+          <div class="row">
+            <div class="deck-name">↗ ${esc(deck.name)} · Ustalaşılanlar</div>
+            <span class="due-badge">${retiredCount}</span>
+          </div>
+        </div>` : ""}`;
     }).join("")}
   `;
 }
 
+// Aynı ekran iki şeyi gösterir: destenin kendisi ve (state.viewRetired ise)
+// o desteden ayrılmış "ustalaşılanlar" listesi. İkisi de kendi sırasıyla
+// çalışılabilir, bu yüzden ortak bir ekran kullanmak en az tekrar eden yol.
 function renderDeck() {
   const deck = decks.find((d) => d.id === state.activeDeckId);
   if (!deck) return `<div class="empty-state">Deste bulunamadı.</div>`;
-  const dc = visibleCards(deck.id, state.currentUser);
-  const due = dc.filter((c) => isDueProgress(getProgress(c.id, state.currentUser))).length;
-  const mastered = dc.filter((c) => getProgress(c.id, state.currentUser).box >= MAX_BOX).length;
-  const canMc = deckSupportsMc(deck.id, state.currentUser);
+  const user = state.currentUser;
+  const retiredView = state.viewRetired;
+  const scope = scopeOf(deck.id, retiredView);
+  const dc = scopeCards(scope, user);
+  const { remaining, total } = rotationCounts(scope, user);
+  const mastered = dc.filter((c) => getProgress(c.id, user).box >= MAX_BOX).length;
+  const canMc = dc.length >= 2 && new Set(dc.map((c) => c.back.trim())).size >= 2;
 
   const byFront = (a, b) => a.front.localeCompare(b.front, "tr");
-  const stageNew = dc.filter((c) => getProgress(c.id, state.currentUser).box === 1).sort(byFront);
-  const stageLearning = dc.filter((c) => { const b = getProgress(c.id, state.currentUser).box; return b >= 2 && b < MAX_BOX; }).sort(byFront);
-  const stageLearned = dc.filter((c) => getProgress(c.id, state.currentUser).box >= MAX_BOX).sort(byFront);
+  const stageNew = dc.filter((c) => getProgress(c.id, user).box === 1).sort(byFront);
+  const stageLearning = dc.filter((c) => { const b = getProgress(c.id, user).box; return b >= 2 && b < MAX_BOX; }).sort(byFront);
+  const stageLearned = dc.filter((c) => getProgress(c.id, user).box >= MAX_BOX).sort(byFront);
 
   const cardRow = (c) => `
     <div class="card-row" data-card-row="${c.id}" data-search-text="${esc(((c.front || "") + " " + (c.back || "")).toLocaleLowerCase("tr"))}">
@@ -1531,16 +1729,38 @@ function renderDeck() {
         <div class="back">${esc(plainCardText(c.back))}</div>
       </div>
       ${c.visibility !== "both" ? `<span class="vis-tag">${esc(c.visibility)}</span>` : ""}
-      <span class="box-label mono" style="color:${STAGE_DEFS[getProgress(c.id, state.currentUser).box - 1].color};">${getProgress(c.id, state.currentUser).box}/5</span>
-      <div class="box-dots">${[1,2,3,4,5].map((b) => `<span class="box-dot ${b <= getProgress(c.id, state.currentUser).box ? "on" + b : ""}" data-set-box="${c.id}" data-box-val="${b}" title="Kutu ${b} olarak işaretle"></span>`).join("")}</div>
+      <span class="box-label mono" style="color:${STAGE_DEFS[getProgress(c.id, user).box - 1].color};">${getProgress(c.id, user).box}/5</span>
+      ${retiredView
+        ? `<button class="icon-btn" data-unretire="${c.id}" title="Ana desteye geri al">↩</button>`
+        : `<div class="box-dots">${[1,2,3,4,5].map((b) => `<span class="box-dot ${b <= getProgress(c.id, user).box ? "on" + b : ""}" data-set-box="${c.id}" data-box-val="${b}" title="Kutu ${b} olarak işaretle"></span>`).join("")}</div>`}
       <button class="icon-btn" data-edit-card="${c.id}">✎</button>
       <button class="icon-btn danger" data-delete-card="${c.id}">✕</button>
     </div>`;
 
-  const pausedHere = (() => {
-    const p = loadPausedSession();
-    return p && p.deckId === deck.id && p.user === state.currentUser ? p : null;
-  })();
+  const studyBlock = dc.length > 0 ? `
+      <div class="grid-2" style="margin-bottom:10px;">
+        <button class="btn btn-primary" id="btn-study-flip">🔄 Çevirerek çalış</button>
+        <button class="btn btn-gold" id="btn-study-mc" ${canMc ? "" : "disabled"}>☑️ Çoktan seçmeli</button>
+      </div>
+      ${!canMc ? `<p class="muted" style="font-size:12px;margin-bottom:14px;">Çoktan seçmeli için en az 2 farklı cevaplı kart gerekir.</p>` : ""}
+      ${!retiredView ? `<button class="btn btn-ghost" id="btn-practice" style="margin-bottom:14px;">🎙 Claude ile sesli pratik</button>` : ""}
+    ` : "";
+
+  if (retiredView) {
+    return `
+      <button class="back-link" id="btn-back-deck">‹ ${esc(deck.name)} destesine dön</button>
+      <div class="deck-title-row">
+        <h1 style="font-size:24px;">${esc(deck.name)} · Ustalaşılanlar</h1>
+      </div>
+      <p class="muted" style="font-size:14px;margin-bottom:14px;">${dc.length} kart · sırada ${remaining}/${total} (${esc(user)})</p>
+      <p class="muted" style="font-size:12.5px;margin-bottom:14px;line-height:1.5;background:var(--mavi-yumusak);border-left:2px solid var(--mavi);padding:8px 10px;border-radius:var(--r-kucuk);">
+        Bu liste yalnızca <b>${esc(user)}</b> için geçerli. Kartlar ana destede duruyor,
+        sadece senin sıranda karşına çıkmıyorlar. İstediğinde <b>↩</b> ile geri alabilirsin.
+      </p>
+      ${studyBlock}
+      ${dc.length === 0 ? `<div class="empty-state">Henüz ayrılmış kart yok.</div>` : ""}
+      <div id="card-list">${dc.sort(byFront).map(cardRow).join("")}</div>`;
+  }
 
   return `
     <button class="back-link" id="btn-back-home">‹ Destelere dön</button>
@@ -1548,22 +1768,9 @@ function renderDeck() {
       <h1 style="font-size:24px;">${esc(deck.name)}</h1>
       <button class="icon-btn danger" id="btn-delete-deck" title="Desteyi sil">🗑</button>
     </div>
-    <p class="muted" style="font-size:14px;margin-bottom:14px;">${dc.length} kart · ${due} tekrar bekliyor · ${mastered} ustalaşıldı (${esc(state.currentUser)})</p>
-    ${dc.length > 0 ? renderLearningCurve(dc, state.currentUser) : ""}
-    ${pausedHere ? `<button class="btn btn-gold" id="btn-resume-session" style="margin-bottom:12px;">▶ Kaldığın yerden devam et (${pausedHere.qIndex + 1}/${pausedHere.cardIds.length})</button>` : ""}
-    ${dc.length > 0 ? `
-      <div class="visibility-toggle">
-        <button type="button" class="vis-pill ${state.studyOrder === "shuffled" ? "active" : ""}" data-set-order="shuffled">🔀 Karışık</button>
-        <button type="button" class="vis-pill ${state.studyOrder === "sequential" ? "active" : ""}" data-set-order="sequential">➡️ Sıralı</button>
-      </div>
-      <div class="grid-2" style="margin-bottom:10px;">
-        <button class="btn btn-primary" id="btn-study-flip">🔄 Çevirerek çalış</button>
-        <button class="btn btn-gold" id="btn-study-mc" ${canMc ? "" : "disabled"}>☑️ Çoktan seçmeli</button>
-      </div>
-      ${!canMc ? `<p class="muted" style="font-size:12px;margin-bottom:14px;">Çoktan seçmeli için en az 2 farklı cevaplı kart gerekir.</p>` : ""}
-      ${due === 0 ? `<button id="btn-study-all" class="muted" style="background:none;font-size:12px;text-decoration:underline;width:100%;margin-bottom:18px;">Tekrar zamanı gelmedi — yine de hepsini çalış</button>` : ""}
-      <button class="btn btn-ghost" id="btn-practice" style="margin-bottom:14px;">🎙 Claude ile sesli pratik</button>
-    ` : ""}
+    <p class="muted" style="font-size:14px;margin-bottom:14px;">${dc.length} kart · sırada ${remaining}/${total} · ${mastered} ustalaşıldı (${esc(user)})</p>
+    ${dc.length > 0 ? renderLearningCurve(dc, user, null, deck.id) : ""}
+    ${studyBlock}
     <div class="grid-2" style="margin-bottom:18px;">
       <button class="btn btn-outline" id="btn-add-card">+ Kart ekle</button>
       <button class="btn btn-outline" id="btn-open-import">⇪ İçe aktar</button>
@@ -1650,7 +1857,6 @@ function renderStudy() {
     <div class="top-row" style="margin-bottom:6px;">
       <div style="display:flex;align-items:center;gap:12px;">
         <button id="btn-exit-study" class="muted" style="background:none;font-size:14px;">✕ Çık</button>
-        <button id="btn-stop-study" class="muted" style="background:none;font-size:14px;">⏸ Durdur</button>
       </div>
       <div style="display:flex;align-items:center;gap:12px;">
         <button id="btn-edit-study-card" class="muted" style="background:none;font-size:15px;" title="Bu kartı düzenle">✎</button>
@@ -1659,6 +1865,7 @@ function renderStudy() {
       </div>
     </div>
     <div class="progress-bar-outer"><div class="progress-bar-inner" style="width:${pct}%;"></div></div>
+    ${state.passToast ? `<div class="pass-toast">🎉 Desteyi baştan sona bitirdin — kartlar yeniden karıştı, yeni tur başlıyor.</div>` : ""}
   `;
   if (state.studyMode === "flip") {
     return `
@@ -1726,7 +1933,7 @@ function renderSummary() {
     <div style="text-align:center;padding-top:30px;">
       <div class="summary-icon">🔥</div>
       <h1 style="font-size:24px;margin-bottom:4px;">Seans tamamlandı</h1>
-      <p class="muted" style="font-size:14px;margin-bottom:26px;">${esc(state.currentUser)} · ${currentStreak(state.currentUser)} günlük seri</p>
+      <p class="muted" style="font-size:14px;margin-bottom:26px;">${esc(state.currentUser)}</p>
       <div class="grid-2" style="margin-bottom:22px;">
         <div class="stat-box"><div class="stat-num" style="color:var(--yesil);">${state.sessionCorrect}</div><p class="muted" style="font-size:12px;margin-top:4px;">Doğru</p></div>
         <div class="stat-box"><div class="stat-num" style="color:var(--kirmizi);">${state.sessionWrong}</div><p class="muted" style="font-size:12px;margin-top:4px;">Yanlış</p></div>
@@ -1751,7 +1958,7 @@ function renderStats() {
           <div class="avatar">${esc(user[0])}</div>
           <div>
             <div style="font-weight:600;">${esc(user)}</div>
-            <div class="muted" style="font-size:11px;">🔥 ${currentStreak(user)} günlük seri</div>
+            <div class="muted" style="font-size:11px;">${s.totalReviewed || 0} tekrar</div>
           </div>
           <span class="level-badge">${level}</span>
         </div>
@@ -2045,11 +2252,16 @@ function bindEvents() {
   if (btnNewDeck) btnNewDeck.onclick = () => { state.showNewDeck = true; render(); };
 
   document.querySelectorAll("[data-open-deck]").forEach((el) => {
-    el.onclick = () => { state.activeDeckId = el.dataset.openDeck; state.view = "deck"; render(); };
+    el.onclick = () => { state.activeDeckId = el.dataset.openDeck; state.viewRetired = false; state.view = "deck"; render(); };
+  });
+  document.querySelectorAll("[data-open-retired]").forEach((el) => {
+    el.onclick = () => { state.activeDeckId = el.dataset.openRetired; state.viewRetired = true; state.view = "deck"; render(); };
   });
 
   const btnBack = document.getElementById("btn-back-home");
-  if (btnBack) btnBack.onclick = () => { state.view = "home"; render(); };
+  if (btnBack) btnBack.onclick = () => { state.viewRetired = false; state.view = "home"; render(); };
+  const btnBackDeck = document.getElementById("btn-back-deck");
+  if (btnBackDeck) btnBackDeck.onclick = () => { state.viewRetired = false; render(); };
 
   const btnDeleteDeck = document.getElementById("btn-delete-deck");
   if (btnDeleteDeck) btnDeleteDeck.onclick = () => {
@@ -2058,15 +2270,14 @@ function bindEvents() {
   };
 
   const btnStudyFlip = document.getElementById("btn-study-flip");
-  if (btnStudyFlip) btnStudyFlip.onclick = () => startStudy("flip", false);
+  if (btnStudyFlip) btnStudyFlip.onclick = () => startStudy("flip");
   const btnStudyMc = document.getElementById("btn-study-mc");
-  if (btnStudyMc) btnStudyMc.onclick = () => startStudy("mc", false);
-  const btnStudyAll = document.getElementById("btn-study-all");
-  if (btnStudyAll) btnStudyAll.onclick = () => startStudy("flip", true);
-  const btnResumeSession = document.getElementById("btn-resume-session");
-  if (btnResumeSession) btnResumeSession.onclick = resumeSession;
-  document.querySelectorAll("[data-set-order]").forEach((el) => {
-    el.onclick = () => { state.studyOrder = el.dataset.setOrder; localStorage.setItem("flashcard-study-order", state.studyOrder); render(); };
+  if (btnStudyMc) btnStudyMc.onclick = () => startStudy("mc");
+  document.querySelectorAll("[data-retire-deck]").forEach((el) => {
+    el.onclick = (e) => { e.stopPropagation(); retireMastered(el.dataset.retireDeck); };
+  });
+  document.querySelectorAll("[data-unretire]").forEach((el) => {
+    el.onclick = (e) => { e.stopPropagation(); unretireCard(el.dataset.unretire); };
   });
   document.querySelectorAll("[data-set-box]").forEach((el) => {
     el.onclick = (e) => { e.stopPropagation(); setBoxManually(el.dataset.setBox, Number(el.dataset.boxVal)); };
@@ -2280,9 +2491,7 @@ function bindEvents() {
   };
 
   const btnExitStudy = document.getElementById("btn-exit-study");
-  if (btnExitStudy) btnExitStudy.onclick = () => { commitSessionStats(); state.view = "deck"; render(); };
-  const btnStopStudy = document.getElementById("btn-stop-study");
-  if (btnStopStudy) btnStopStudy.onclick = stopSession;
+  if (btnExitStudy) btnExitStudy.onclick = finishSession;
   const btnDeleteStudyCard = document.getElementById("btn-delete-study-card");
   if (btnDeleteStudyCard) btnDeleteStudyCard.onclick = deleteStudyCard;
   const btnEditStudyCard = document.getElementById("btn-edit-study-card");
@@ -2351,11 +2560,10 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "ArrowLeft") { e.preventDefault(); goToPreviousCard(); }
   else if (e.key === "s" || e.key === "S") { e.preventDefault(); speak(state.flipped ? card.back : card.front); }
   else if (e.key === "z" || e.key === "Z") { e.preventDefault(); undoLastAction(); }
-  else if (e.key === "Escape") { e.preventDefault(); commitSessionStats(); state.view = "deck"; render(); }
+  else if (e.key === "Escape") { e.preventDefault(); finishSession(); }
 });
 
-document.addEventListener("visibilitychange", () => { if (document.hidden) saveSessionSnapshot(); });
-window.addEventListener("pagehide", saveSessionSnapshot);
+
 
 render();
 </script>
