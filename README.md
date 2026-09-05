@@ -84,18 +84,6 @@ dosyasına indirir ve aynı dosyadan geri yükler. Geri yükleme yıkıcı
 değildir: aynı id'li kayıtların üzerine yazılır, yedekte olmayan hiçbir
 kayıt silinmez. Geri yüklemeden önce mevcut halin yedeği otomatik iner.
 
-## Sesli pratik (Claude)
-
-Bir destede **🎙 Claude ile sesli pratik**: mikrofona konuşursun, Claude
-destedeki kelimeler üzerinden sohbet eder ve cevabı yüksek sesle okunur.
-
-Bu özellik `worker/` altındaki küçük bir Cloudflare Worker'a ihtiyaç duyar —
-Anthropic API anahtarı tarayıcıya konamaz, çünkü `index.html` herkese açık.
-Kurulum adımları **`worker/README.md`** dosyasında. Kurulmadan uygulamanın
-geri kalanı normal çalışır; yalnızca bu buton kurulum penceresi açar.
-
-Ses tanıma Chrome, Edge ve Safari'de çalışır; Firefox'ta çalışmaz.
-
 ## Firestore kuralları
 
 Güvenlik kuralları `firestore.rules` dosyasında. Firebase konsolunda
@@ -142,6 +130,42 @@ yeniden karışır ve tur baştan başlar.
 - Tur ortasında eklenen kart, sıranın kalan kısmına rastgele serpiştirilir.
 - Deste ekranındaki `75/100` sayacı: sırada kalan kart / toplam kart.
 
+## Birlikte çalışma
+
+Deste ekranındaki **👥 Birlikte / 🙋 Tek başıma** seçicisi cevap düğmelerini
+belirler. Birlikte modda dört düğme çıkar ve tek cevap iki kişinin kaydını
+birden günceller:
+
+| Düğme | `USERS[0]` | `USERS[1]` |
+|---|---|---|
+| `<USERS[0]> bildi` | doğru | yanlış |
+| `<USERS[1]> bildi` | yanlış | doğru |
+| `İkimiz bildik` | doğru | doğru |
+| `İkimiz de bilemedik` | yanlış | yanlış |
+
+Düğmelerin yeri `USERS` sırasına sabittir; ekranda kim seçili olursa olsun
+değişmez. Kart yalnız bir kişiye görünüyorsa (`visibility`) otomatik olarak
+iki düğmeye (`Bilmedim` / `Bildim`) düşülür.
+
+Cevap veren ekranda seçili olmayan kullanıcı için şu kurallar geçerli:
+
+- Kart onun sırasında henüz gelmediyse **doğru bildiğinde** imlecin gerisine
+  alınır — "sanki o da çalıştı" sayılır, `kalan` bir azalır.
+- **Bilemediğinde** kart sırasında olduğu yerde kalır.
+- Kartı ustalaşılanlara ayırmışsa kaydına hiç dokunulmaz.
+
+Tek başına modda yalnızca ekranda seçili kişinin kaydı değişir. Bu seçenek
+şunun için var: tek başına çalışırken "`USERS[0]` bildi" demek aynı zamanda
+"`USERS[1]` bilemedi" demek olurdu ve karşı taraf haksız yere geriye düşerdi.
+
+## Günlük sayaç
+
+Ana ekranda her kullanıcı için o günün doğru / yanlış / toplam sayısı görünür.
+`stats/<kullanıcı>` belgesinde `todayDate`, `todayCorrect`, `todayWrong`
+alanlarında durur; kayıtlı tarih bugün değilse değerler sıfır sayılır, gece
+yarısı ayrı bir sıfırlama yazması gerekmez. Sayaçlar seans boyunca bellekte
+birikip çalışmadan çıkarken (ve sekme kapanırken) yazılır.
+
 ## Ustalaşma
 
 `progress` kaydındaki `streak` alanı arka arkaya kaç kez doğru bilindiğini
@@ -159,9 +183,9 @@ Ayrılan kartlar ana ekranda `<deste> · Ustalaşılanlar` olarak görünür ve
 
 | Tuş | İşlev |
 |---|---|
-| `Boşluk` / `Enter` | Kartı çevir · çoktan seçmelide devam et |
-| `1` `2` `3` | Bilmedim · Bildim · Kesin öğrendim |
-| `1`–`4` | Çoktan seçmelide şık seç |
+| `Boşluk` / `Enter` | Kartı çevir |
+| `1` `2` `3` `4` | Birlikte modda: `USERS[0]` bildi · `USERS[1]` bildi · ikimiz · hiçbirimiz |
+| `1` `2` | Tek başına modda: bilmedim · bildim |
 | `←` | Önceki soru |
 | `S` | Sesli oku |
 | `Z` | Geri al |

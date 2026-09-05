@@ -142,31 +142,41 @@
   /* Uzun metinlerde kart yüzü kaydırılabilir olmalı; kısa metin dikeyde ortada kalır. */
   .face-body { position:relative; width:100%; flex:0 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; align-items:flex-start; }
   /* 12px'te bile sığmayan kartlarda aşağısı olduğunu belli eden soluklaşma. */
-  .face.has-overflow::after, .mc-question.has-overflow::after {
+  .face.has-overflow::after {
     content:""; position:absolute; left:1px; right:1px; bottom:1px; height:38px; pointer-events:none;
     border-radius:0 0 var(--r) var(--r);
     background:linear-gradient(to bottom, transparent, var(--panel-acik));
   }
-  .mc-question { position:relative; }
-  .mc-text { width:100%; max-height:46dvh; overflow-y:auto; }
+
   .rt-list { width:100%; text-align:left; margin:0; padding-left:1.35em; }
   .rt-list li { margin:2px 0; }
   .rt-list li::marker { color:var(--sonuk); font-weight:600; }
   .rt-line { width:100%; text-align:left; }
   .rt-line.blank { height:.55em; }
-  .answer-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:10px; }
-  .answer-btn { border-radius:var(--r); padding:15px; font-weight:600; display:flex; align-items:center; justify-content:center; gap:8px; }
-  .master-btn { width:100%; border-radius:var(--r-kucuk); padding:11px; font-weight:600; font-size:13px; background:var(--sari-yumusak); color:var(--sari); border:1.5px solid var(--sari); margin-bottom:10px; }
+  .answer-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; }
+  .answer-btn { border-radius:var(--r); padding:15px; font-weight:600; font-size:14px; line-height:1.25; display:flex; align-items:center; justify-content:center; text-align:center; gap:8px; }
+  /* Birlikte çalışma düğmeleri. Yerleri USERS sırasına sabit: kim çalışırsa
+     çalışsın aynı yerde dursunlar, kas hafızası bozulmasın. */
+  .ans-one { background:var(--mavi-yumusak); color:var(--mavi); border:1.5px solid var(--mavi); }
+  .ans-both { background:var(--yesil-yumusak); color:var(--yesil); border:1.5px solid var(--yesil); }
+  .ans-none { background:var(--kirmizi-yumusak); color:var(--kirmizi); border:1.5px solid var(--kirmizi); }
+  /* Ana ekrandaki günlük sayaç. */
+  .today-box { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:11px 13px; margin-bottom:14px; }
+  .today-title { font-size:10.5px; letter-spacing:1.4px; text-transform:uppercase; color:var(--sonuk); font-weight:600; margin-bottom:7px; }
+  .today-row { display:flex; align-items:center; gap:10px; font-size:13px; margin-top:3px; }
+  .today-row .name { flex:1; min-width:0; font-weight:600; color:var(--metin); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .today-row .num { font-family:'IBM Plex Mono',monospace; font-size:12.5px; }
+  .today-row .ok { color:var(--yesil); }
+  .today-row .no { color:var(--kirmizi); }
+  .today-row .tot { color:var(--sonuk); min-width:34px; text-align:right; }
+
   .nav-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   .nav-actions .btn-secondary { border-radius:var(--r-kucuk); padding:11px; font-weight:600; font-size:13px; background:var(--panel); color:var(--metin); border:1px solid var(--line); }
   .nav-actions .btn-secondary:disabled { opacity:0.35; }
   @keyframes cardEnter { from { opacity:0; transform:translateY(10px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
-  .perspective, .mc-question { animation:cardEnter .38s cubic-bezier(.2,.8,.3,1); }
+  .perspective { animation:cardEnter .38s cubic-bezier(.2,.8,.3,1); }
   .hint { text-align:center; font-size:12px; color:var(--sonuk); }
-  .mc-question { background:var(--panel-acik); border:1px solid var(--line); border-radius:var(--r); padding:24px; margin-bottom:18px; display:flex; flex-direction:column; align-items:center; text-align:left; min-height:150px; justify-content:center; }
-  .mc-question img { width:76px; height:76px; border-radius:var(--r-kucuk); object-fit:cover; margin-bottom:12px; }
-  .mc-question .mc-text { font-family:'Fraunces',Georgia,serif; font-size:18px; font-weight:600; color:var(--metin); white-space:pre-wrap; word-break:break-word; width:100%; text-align:left; }
-  .mc-option { width:100%; text-align:left; white-space:pre-wrap; word-break:break-word; border-radius:var(--r-kucuk); padding:13px 16px; font-size:14px; font-weight:500; margin-bottom:9px; background:var(--panel); border:1.5px solid var(--line); color:var(--metin); }
+
   .progress-bar-outer { width:100%; height:4px; border-radius:var(--r-kucuk); background:var(--line); overflow:hidden; margin-bottom:20px; }
   .progress-bar-inner { height:100%; background:var(--mavi); }
   .undo-btn { font-size:12px; color:var(--sonuk); background:none; text-decoration:underline; display:block; margin:0 auto 16px; }
@@ -212,24 +222,8 @@
   .search-divider { display:flex; align-items:center; gap:10px; margin:22px 0 14px; font-size:10.5px; letter-spacing:1.5px; text-transform:uppercase; color:var(--sonuk); }
   .search-divider::before, .search-divider::after { content:""; flex:1; height:1px; background:var(--line); }
   .speak-btn { position:absolute; top:12px; right:12px; background:var(--line); border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; font-size:15px; padding:0; line-height:1; }
-  .speak-btn-inline { margin-top:12px; background:var(--line); color:var(--metin); border-radius:999px; padding:6px 14px; font-size:12px; font-weight:600; }
-  .chat-scroll { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:12px; min-height:220px; max-height:46vh; overflow-y:auto; margin-bottom:16px; }
-  .chat-row { display:flex; margin-bottom:9px; }
-  .chat-row.user { justify-content:flex-end; }
-  .chat-row.assistant { justify-content:flex-start; }
-  .chat-bubble { max-width:82%; padding:10px 13px; border-radius:var(--r); font-size:14px; line-height:1.5; white-space:pre-wrap; word-break:break-word; }
-  .chat-bubble.user { background:var(--mavi-yumusak); border:1px solid var(--mavi); border-bottom-right-radius:var(--r-kucuk); }
-  .chat-bubble.assistant { background:var(--panel-acik); border:1px solid var(--line); border-bottom-left-radius:var(--r-kucuk); }
-  .chat-bubble.live { opacity:0.72; font-style:italic; min-height:20px; }
-  .mic-wrap { text-align:center; padding-bottom:10px; }
-  .mic-btn { width:76px; height:76px; border-radius:50%; font-size:30px; background:var(--panel-acik); border:2px solid var(--line); color:var(--metin); display:inline-flex; align-items:center; justify-content:center; transition:transform .15s ease, background .2s ease, border-color .2s ease; }
-  .mic-btn:active { transform:scale(0.94); }
-  .mic-btn.listening { background:var(--kirmizi-yumusak); border-color:var(--kirmizi); animation:micPulse 1.3s ease-in-out infinite; }
-  .mic-btn.thinking, .mic-btn.replying { background:var(--sari-yumusak); border-color:var(--sari); }
-  .mic-btn.speaking { background:var(--yesil-yumusak); border-color:var(--yesil); }
-  .mic-btn:disabled { opacity:0.75; cursor:default; }
-  @keyframes micPulse { 0%,100% { box-shadow:0 0 0 0 color-mix(in srgb, var(--kirmizi) 45%, transparent); } 50% { box-shadow:0 0 0 14px transparent; } }
-  @media (prefers-reduced-motion: reduce) { .mic-btn.listening { animation:none; } }
+
+
 </style>
 </head>
 <body>
@@ -491,7 +485,11 @@ const state = {
   deckSearch: "",         // deste içi kart arama
   formVisibility: "both", // 'both' | user name
   focusFrontOnOpen: false,
-  studyMode: "flip",
+  // Birlikte mi çalışılıyor: açıkken bir cevap iki kişinin kaydını da
+  // günceller, kapalıyken yalnızca ekranda seçili kişiyi.
+  together: localStorage.getItem("flashcard-together") !== "0",
+  // Günlük sayaçlar seans boyunca burada birikir, çalışmadan çıkınca yazılır.
+  pendingDaily: {},
   viewRetired: false,     // deste ekranı ustalaşılanlar listesini mi gösteriyor
   studyScope: null,       // çalışılan kapsam: deste id'si ya da "<id>::retired"
   rotation: null,         // { order:[kart id], pos:n } — destenin sabit sırası
@@ -500,22 +498,14 @@ const state = {
   queue: [],
   qIndex: 0,
   flipped: false,
-  mcOptions: [],
-  mcSelected: null,
   sessionCorrect: 0,
   sessionWrong: 0,
-  sessionReviewed: 0, // istatistiğe henüz işlenmemiş tekrar sayısı
+
   lastAction: null, // for undo
-  // sesli pratik
-  practiceTurns: [],      // [{role, content}]
-  practiceStatus: "idle", // idle | listening | thinking | replying | speaking
-  practiceHeard: "",      // mikrofonun o an duyduğu
-  practiceDraft: "",      // Claude'dan akan cevap
-  practiceError: null,
-  showPracticeSetup: false,
+
 };
 
-function modalOpen() { return state.showNewDeck || state.showCardForm || state.showImport || state.showExport || state.showBackup || state.showPracticeSetup; }
+function modalOpen() { return state.showNewDeck || state.showCardForm || state.showImport || state.showExport || state.showBackup; }
 let pendingRender = false;
 function maybeRender() {
   // Yedek modalında metin girişi yok; sayılar canlı kalsın diye yeniden çizilebilir.
@@ -575,66 +565,6 @@ function speak(text) {
 }
 const speechSupported = typeof window !== "undefined" && "speechSynthesis" in window;
 
-// ---------- ses tanıma (konuşmayı metne çevirme) ----------
-const SpeechRec = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
-const recognitionSupported = !!SpeechRec;
-let recognition = null;
-
-// Mikrofonu açar. onResult(metin) duyulan cümleyle çağrılır.
-function startListening(lang, onResult, onEnd, onError) {
-  if (!SpeechRec) { onError && onError("Bu tarayıcı ses tanımayı desteklemiyor."); return null; }
-  stopListening();
-  const rec = new SpeechRec();
-  rec.lang = lang;
-  rec.interimResults = true;
-  rec.continuous = false;
-  let finalText = "";
-  rec.onresult = (e) => {
-    let interim = "";
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const r = e.results[i];
-      if (r.isFinal) finalText += r[0].transcript;
-      else interim += r[0].transcript;
-    }
-    onResult(finalText, interim);
-  };
-  rec.onerror = (e) => {
-    // "aborted" bizim kendi durdurmamız; hata sayma.
-    if (e.error !== "aborted") onError && onError(speechErrorText(e.error));
-  };
-  rec.onend = () => { recognition = null; onEnd && onEnd(finalText.trim()); };
-  recognition = rec;
-  try { rec.start(); } catch (err) { onError && onError(err.message); }
-  return rec;
-}
-function stopListening() {
-  if (recognition) { try { recognition.stop(); } catch {} recognition = null; }
-}
-function speechErrorText(code) {
-  if (code === "not-allowed" || code === "service-not-allowed") return "Mikrofon izni verilmedi. Tarayıcı ayarlarından izin ver.";
-  if (code === "no-speech") return "Ses duyulmadı, tekrar dene.";
-  if (code === "network") return "Ses tanıma için internet gerekiyor.";
-  if (code === "audio-capture") return "Mikrofon bulunamadı.";
-  return "Ses tanıma hatası: " + code;
-}
-
-// Sesli okumanın bitmesini bekleyen sürüm — cevap bitmeden mikrofon açılmasın.
-function speakAsync(text, lang) {
-  return new Promise((resolve) => {
-    if (!speechSupported || !text) { resolve(); return; }
-    try {
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = lang || guessLang(text);
-      const voice = speechSynthesis.getVoices().find((v) => v.lang === u.lang)
-        || speechSynthesis.getVoices().find((v) => v.lang.startsWith(u.lang.slice(0, 2)));
-      if (voice) u.voice = voice;
-      u.onend = () => resolve();
-      u.onerror = () => resolve();
-      speechSynthesis.speak(u);
-    } catch { resolve(); }
-  });
-}
 
 // ---------- klavye ----------
 // Kısayol ipuçları yalnızca fiziksel klavyesi olan cihazlarda gösterilsin.
@@ -1227,153 +1157,6 @@ function handleBackupFile(file) {
   reader.readAsText(file);
 }
 
-// =========================================================================
-// SESLİ PRATİK (Claude)
-// Tarayıcı doğrudan Anthropic'e istek atamaz — API anahtarı herkese açık
-// olurdu. İstekler worker/ altındaki Cloudflare Worker'a gider, anahtar
-// orada durur. Kurulum: worker/README.md
-// =========================================================================
-const PRACTICE_URL_KEY = "flashcard-practice-url";
-const PRACTICE_PASS_KEY = "flashcard-practice-pass";
-const PRACTICE_LANG_KEY = "flashcard-practice-lang";
-
-function practiceUrl() { try { return localStorage.getItem(PRACTICE_URL_KEY) || ""; } catch { return ""; } }
-function practicePass() { try { return localStorage.getItem(PRACTICE_PASS_KEY) || ""; } catch { return ""; } }
-function practiceConfigured() { return !!practiceUrl() && !!practicePass(); }
-function savePracticeConfig(url, pass) {
-  try {
-    localStorage.setItem(PRACTICE_URL_KEY, url.trim().replace(/\/+$/, ""));
-    localStorage.setItem(PRACTICE_PASS_KEY, pass);
-  } catch {}
-}
-function practiceLang() { try { return localStorage.getItem(PRACTICE_LANG_KEY) || "en"; } catch { return "en"; } }
-function savePracticeLang(l) { try { localStorage.setItem(PRACTICE_LANG_KEY, l); } catch {} }
-function practiceLangTag() { return practiceLang() === "tr" ? "tr-TR" : "en-US"; }
-
-// Worker'a bir tur gönderir, cevabı parça parça okur.
-// onChunk her yeni metin parçasında çağrılır; tam metin döner.
-async function askClaude(userText, history, onChunk) {
-  const deck = decks.find((d) => d.id === state.activeDeckId);
-  const dc = visibleCards(state.activeDeckId, state.currentUser);
-  const res = await fetch(practiceUrl(), {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-App-Passphrase": practicePass() },
-    body: JSON.stringify({
-      message: userText,
-      history: history.map((t) => ({ role: t.role, content: t.content })),
-      deckName: deck ? deck.name : "deste",
-      cards: dc.map((c) => ({ front: c.front, back: c.back })),
-      lang: practiceLang(),
-    }),
-  });
-
-  if (!res.ok) {
-    let msg = "Sunucu hatası (" + res.status + ")";
-    try { const j = await res.json(); if (j && j.error) msg = j.error; } catch {}
-    throw new Error(msg);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let full = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const piece = decoder.decode(value, { stream: true });
-    full += piece;
-    onChunk(full);
-  }
-  return full.trim();
-}
-
-function startPractice() {
-  state.practiceTurns = [];
-  state.practiceStatus = "idle";
-  state.practiceError = null;
-  state.practiceHeard = "";
-  state.practiceDraft = "";
-  state.view = "practice";
-  render();
-}
-
-function endPractice() {
-  stopListening();
-  if (speechSupported) { try { speechSynthesis.cancel(); } catch {} }
-  state.practiceStatus = "idle";
-  state.view = "deck";
-  render();
-}
-
-// Mikrofonu aç → duyulanı Claude'a gönder → cevabı seslendir.
-function practiceListen() {
-  if (state.practiceStatus !== "idle") return;
-  state.practiceError = null;
-  state.practiceHeard = "";
-  state.practiceStatus = "listening";
-  render();
-
-  startListening(
-    practiceLangTag(),
-    (finalText, interim) => {
-      state.practiceHeard = (finalText + " " + interim).trim();
-      updatePracticeLive();
-    },
-    (finalText) => {
-      if (!finalText) {
-        state.practiceStatus = "idle";
-        state.practiceHeard = "";
-        render();
-        return;
-      }
-      practiceSend(finalText);
-    },
-    (msg) => {
-      state.practiceError = msg;
-      state.practiceStatus = "idle";
-      render();
-    }
-  );
-}
-
-async function practiceSend(userText) {
-  // Geçmiş, bu mesaj eklenmeden önceki hali olmalı — yoksa kullanıcının
-  // cümlesi Claude'a hem `history` hem `message` içinde iki kez gider.
-  const history = state.practiceTurns.slice();
-  state.practiceTurns.push({ role: "user", content: userText });
-  state.practiceHeard = "";
-  state.practiceDraft = "";
-  state.practiceStatus = "thinking";
-  render();
-
-  try {
-    const reply = await askClaude(userText, history, (partial) => {
-      state.practiceDraft = partial;
-      if (state.practiceStatus === "thinking") { state.practiceStatus = "replying"; render(); }
-      else updatePracticeLive();
-    });
-    state.practiceDraft = "";
-    state.practiceTurns.push({ role: "assistant", content: reply });
-    state.practiceStatus = "speaking";
-    render();
-    await speakAsync(reply, practiceLangTag());
-    // Kullanıcı bu sırada ekrandan çıkmış olabilir.
-    if (state.view === "practice") { state.practiceStatus = "idle"; render(); }
-  } catch (err) {
-    state.practiceDraft = "";
-    state.practiceError = err.message;
-    state.practiceStatus = "idle";
-    render();
-  }
-}
-
-// Akış sırasında tüm ekranı yeniden çizmemek için yalnızca canlı balonu güncelle.
-function updatePracticeLive() {
-  const el = document.getElementById("practice-live");
-  if (!el) { render(); return; }
-  el.textContent = state.practiceStatus === "listening" ? state.practiceHeard : state.practiceDraft;
-  const scroller = document.getElementById("practice-scroll");
-  if (scroller) scroller.scrollTop = scroller.scrollHeight;
-}
 
 // ---------- realtime listeners ----------
 // Yedek alırken eksik veri yazmamak için her koleksiyonun en az bir kez
@@ -1387,18 +1170,21 @@ onSnapshot(progressCol, (snap) => { progressList = snap.docs.map((d) => ({ id: d
 onSnapshot(statsCol, (snap) => { statsList = snap.docs.map((d) => ({ id: d.id, ...d.data() })); loaded.stats = true; maybeRender(); }, (e) => console.error(e));
 
 // ---------- study session ----------
-function buildMcOptions(card) {
-  if (!card) return [];
-  const pool = visibleCards(card.deckId, state.currentUser);
-  const others = pool.filter((c) => c.id !== card.id && c.back.trim() !== card.back.trim());
-  const wrong = shuffled(others).slice(0, 3);
-  return shuffled([...wrong.map((c) => c.back), card.back]);
+// Kart iki kişiye de görünüyorsa ve "birlikte" modu açıksa dört düğme çıkar:
+// bir cevap hem soranın hem cevaplayanın kaydını günceller. Kart yalnız bir
+// kişiye özelse "kim bildi" sorusunun anlamı kalmaz, iki düğmeye düşülür.
+function togetherMode(card) {
+  return state.together && USERS.length === 2 && !!card && (card.visibility || "both") === "both";
+}
+function canSee(card, user) {
+  const v = card.visibility || "both";
+  return v === "both" || v === user;
 }
 
 // Çalışma her zaman destenin sabit karışık sırası üzerinden gider: kuyruk
 // sıranın tamamıdır, imleç sırada nerede olduğumuzu gösterir. Bu yüzden
 // çıkıp geri geldiğinde kaldığın yerden devam edersin.
-function startStudy(mode) {
+function startStudy() {
   const user = state.currentUser;
   const scope = scopeOf(state.activeDeckId, state.viewRetired);
   let rot = getRotation(scope, user);
@@ -1407,16 +1193,14 @@ function startStudy(mode) {
   if (rot.pos >= rot.order.length) rot = { order: shuffled(rot.order), pos: 0, dirty: true };
   if (rot.dirty) saveRotation(scope, user, rot);
 
-  commitSessionStats(); // önceki seanstan işlenmemiş tekrar kaldıysa yaz
   state.studyScope = scope;
   state.rotation = rot;
   state.qIndex = rot.pos;
   syncQueueFromRotation();
   state.flipped = false;
-  state.sessionCorrect = 0; state.sessionWrong = 0; state.sessionReviewed = 0;
-  state.studyMode = mode; state.mcSelected = null; state.lastAction = null;
+  state.sessionCorrect = 0; state.sessionWrong = 0;
+  state.lastAction = null;
   state.requeueCurrent = false; state.passToast = false;
-  if (mode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
   state.view = "study"; render();
 }
 
@@ -1457,8 +1241,7 @@ function advanceQueue() {
 
   if (state.queue.length === 0) { finishSession(); return; }
   state.passToast = wrapped;
-  state.flipped = false; state.mcSelected = null;
-  if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
+  state.flipped = false;
   render();
   if (wrapped) setTimeout(() => {
     if (!state.passToast) return;
@@ -1479,30 +1262,55 @@ function deleteStudyCard() {
   if (state.qIndex >= state.queue.length) state.qIndex = state.queue.length - 1;
   rot.pos = state.qIndex;
   saveRotation(state.studyScope, state.currentUser, rot);
-  state.flipped = false; state.mcSelected = null;
-  if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
+  state.flipped = false;
   render();
 }
 
-// Seansta gerçekten yapılan tekrarları istatistiğe işler. Seans yarıda
-// kesilse de çağrılır; iki kez çağrılırsa ikincisi sayaç sıfırlandığı için
-// bir şey yapmaz.
+// ---------- günlük sayaçlar ----------
+// Her cevap iki kişiyi birden etkileyebildiği için sayaçlar kişi bazında
+// bellekte birikir; çalışmadan çıkarken (ve sekme kapanırken) yazılır.
+function bumpDaily(user, correct) {
+  const d = state.pendingDaily[user] || (state.pendingDaily[user] = { correct: 0, wrong: 0, reviewed: 0 });
+  if (correct) d.correct++; else d.wrong++;
+  d.reviewed++;
+}
+
+// Bugünün sayıları. Kayıtlı tarih bugün değilse değerler dünden kalmadır ve
+// sıfır sayılır — gece yarısı ayrıca bir sıfırlama yazması gerekmez. Henüz
+// yazılmamış seans sayaçları da eklenir ki ekran canlı görünsün.
+function todayStats(user) {
+  const s = getStats(user);
+  const fresh = s.todayDate === todayStr();
+  let correct = fresh ? s.todayCorrect || 0 : 0;
+  let wrong = fresh ? s.todayWrong || 0 : 0;
+  const p = state.pendingDaily[user];
+  if (p) { correct += p.correct; wrong += p.wrong; }
+  return { correct, wrong, total: correct + wrong };
+}
+
+// Biriken sayaçları Firestore'a yazar. Yarıda kesilen seansta da çağrılır;
+// bir kullanıcının yazması başarısız olursa yalnızca onunki kuyrukta kalır.
 async function commitSessionStats() {
-  const reviewed = state.sessionReviewed;
-  if (reviewed <= 0) return;
-  state.sessionReviewed = 0;
-  const s = getStats(state.currentUser);
-  // Yalnızca değişen alanlar yazılır. `rotations` bilerek dışarıda bırakıldı:
-  // sırayı saveRotation yönetiyor, buradan bayat bir kopyayla ezilmemeli.
-  const updated = {
-    lastStudyDate: todayStr(),
-    totalReviewed: (s.totalReviewed || 0) + reviewed,
-  };
-  try {
-    await setDoc(doc(db, "stats", state.currentUser), updated, { merge: true });
-  } catch (err) {
-    console.error(err);
-    state.sessionReviewed = reviewed; // yazılamadıysa kaybetme, sonra tekrar denenir
+  const pending = state.pendingDaily;
+  state.pendingDaily = {};
+  const today = todayStr();
+  for (const [user, d] of Object.entries(pending)) {
+    if (!d.reviewed) continue;
+    const s = getStats(user);
+    const fresh = s.todayDate === today;
+    try {
+      await setDoc(doc(db, "stats", user), {
+        lastStudyDate: today,
+        totalReviewed: (s.totalReviewed || 0) + d.reviewed,
+        todayDate: today,
+        todayCorrect: (fresh ? s.todayCorrect || 0 : 0) + d.correct,
+        todayWrong: (fresh ? s.todayWrong || 0 : 0) + d.wrong,
+      }, { merge: true });
+    } catch (err) {
+      console.error(err);
+      const back = state.pendingDaily[user] || (state.pendingDaily[user] = { correct: 0, wrong: 0, reviewed: 0 });
+      back.correct += d.correct; back.wrong += d.wrong; back.reviewed += d.reviewed;
+    }
   }
 }
 
@@ -1511,86 +1319,116 @@ async function finishSession() {
   state.view = "summary"; render();
 }
 
-// action: 'wrong' | 'know' | 'master'
-async function applyReview(card, action) {
-  const user = state.currentUser;
-  const key = progressKey(user, card.id);
-  const existingDoc = progressList.find((p) => p.id === key);
-  const prev = existingDoc ? { ...existingDoc } : null;
-  const cur = getProgress(card.id, user);
-
-  // Tarih ve kutu yerine "arka arkaya kaç kez doğru bildim" sayacı güncellenir.
-  let streak = cur.streak, correctDelta = 0, wrongDelta = 0;
-  if (action === "wrong") {
-    streak = 0;               // seri kopar, kart en baştan öğrenilir
-    wrongDelta = 1;
-  } else if (action === "know") {
-    streak = Math.min(MASTER_STREAK, streak + 1);
-    correctDelta = 1;
-  } else if (action === "master") {
-    streak = MASTER_STREAK;   // "kesin öğrendim" doğrudan ustalaşmış sayar
-    correctDelta = 1;
+// Karşı tarafın sırasında bu kart henüz gelmediyse "sanki o da çalıştı"
+// sayılır: kart imlecin hemen gerisine alınır, böylece kalanı bir azalır.
+// Zaten geçmişse sırasına hiç dokunulmaz. Değiştirmeden önceki hâli geri al
+// için döndürülür.
+async function consumeForOther(user, deckId, cardId) {
+  const scope = scopeOf(deckId, false);
+  const rot = getRotation(scope, user);
+  const before = { scope, user, order: [...rot.order], pos: rot.pos };
+  const i = rot.order.indexOf(cardId);
+  if (i >= rot.pos && i >= 0) {
+    rot.order.splice(i, 1);
+    rot.order.splice(rot.pos, 0, cardId);
+    rot.pos++;
+    // Karşı tarafın turu bu şekilde de bitebilir; sessizce yeni tur başlar.
+    if (rot.pos >= rot.order.length) { rot.order = shuffled(rot.order); rot.pos = 0; }
+    rot.dirty = true;
   }
-  const next = {
-    streak, box: boxFromStreak(streak), retired: cur.retired,
-    correctCount: cur.correctCount + correctDelta,
-    wrongCount: cur.wrongCount + wrongDelta,
-    user, cardId: card.id, deckId: card.deckId, updatedAt: Date.now(),
-  };
+  if (rot.dirty) await saveRotation(scope, user, rot);
+  return before;
+}
 
-  state.lastAction = {
-    key, prevExisted: !!existingDoc, prevData: prev,
-    queueIndex: state.qIndex, correctDelta, wrongDelta,
-    // Bilinemeyen kart sıranın sonuna taşınacağı için sıranın o anki hâli de
-    // saklanır; geri al bunu olduğu gibi yerine koyar.
-    rotOrder: [...state.rotation.order],
-  };
-  await setDoc(doc(db, "progress", key), next, { merge: false });
-  state.requeueCurrent = action === "wrong";
-  if (action === "wrong") state.sessionWrong++; else state.sessionCorrect++;
-  state.sessionReviewed++;
+// result: { <kullanıcı>: true|false } — true = o kişi doğru bildi. Etkilenen
+// her kullanıcının streak'i, günlük sayacı ve (aktif olmayanın) sırası
+// güncellenir. Kartı göremeyen ya da ustalaşılanlara ayırmış kullanıcı atlanır.
+async function applyAnswer(card, result) {
+  const active = state.currentUser;
+  const undo = { progress: [], rotations: [], daily: [], queueIndex: state.qIndex, rotOrder: [...state.rotation.order] };
+
+  for (const user of USERS) {
+    const correct = result[user];
+    if (correct === undefined) continue;
+    if (!canSee(card, user)) continue;
+    const cur = getProgress(card.id, user);
+    if (cur.retired && user !== active) continue;   // ayırmış, dokunma
+
+    const key = progressKey(user, card.id);
+    const existingDoc = progressList.find((p) => p.id === key);
+    undo.progress.push({ key, prevExisted: !!existingDoc, prevData: existingDoc ? { ...existingDoc } : null });
+
+    const streak = correct ? Math.min(MASTER_STREAK, cur.streak + 1) : 0;
+    await setDoc(doc(db, "progress", key), {
+      streak, box: boxFromStreak(streak), retired: cur.retired,
+      correctCount: cur.correctCount + (correct ? 1 : 0),
+      wrongCount: cur.wrongCount + (correct ? 0 : 1),
+      user, cardId: card.id, deckId: card.deckId, updatedAt: Date.now(),
+    }, { merge: false });
+
+    bumpDaily(user, correct);
+    undo.daily.push({ user, correct });
+
+    if (user === active) {
+      state.requeueCurrent = !correct;
+      if (correct) state.sessionCorrect++; else state.sessionWrong++;
+    } else if (correct) {
+      // Bilemediyse kart karşı tarafın sırasında olduğu yerde kalır.
+      undo.rotations.push(await consumeForOther(user, card.deckId, card.id));
+    }
+  }
+  state.lastAction = undo;
 }
 
 async function undoLastAction() {
   const a = state.lastAction;
   if (!a) return;
-  if (a.prevExisted) await setDoc(doc(db, "progress", a.key), a.prevData, { merge: false });
-  else await deleteDoc(doc(db, "progress", a.key));
+  for (const p of a.progress) {
+    if (p.prevExisted) await setDoc(doc(db, "progress", p.key), p.prevData, { merge: false });
+    else await deleteDoc(doc(db, "progress", p.key));
+  }
+  for (const r of a.rotations) await saveRotation(r.scope, r.user, { order: r.order, pos: r.pos });
+  for (const d of a.daily) {
+    const cur = state.pendingDaily[d.user];
+    if (!cur) continue;
+    if (d.correct) cur.correct--; else cur.wrong--;
+    cur.reviewed--;
+  }
   state.rotation.order = [...a.rotOrder];
   state.rotation.pos = a.queueIndex;
   state.qIndex = a.queueIndex;
   state.requeueCurrent = false;
   syncQueueFromRotation();
   saveRotation(state.studyScope, state.currentUser, state.rotation);
-  state.sessionCorrect -= a.correctDelta;
-  state.sessionWrong -= a.wrongDelta;
-  if (state.sessionReviewed > 0) state.sessionReviewed--;
-  state.flipped = false; state.mcSelected = null;
-  if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
+  const mine = a.daily.find((d) => d.user === state.currentUser);
+  if (mine) { if (mine.correct) state.sessionCorrect--; else state.sessionWrong--; }
+  state.flipped = false;
   state.lastAction = null;
   render();
 }
 
-function handleFlipAnswer(action) {
+// data-answer değerleri: "11" ikimiz, "10" yalnız USERS[0], "01" yalnız
+// USERS[1], "00" hiçbirimiz; "solo1"/"solo0" tek başına çalışırken.
+function handleAnswer(code) {
   const card = state.queue[state.qIndex];
-  applyReview(card, action).then(() => advanceQueue());
+  if (!card) return;
+  let result;
+  if (code === "solo1" || code === "solo0") {
+    result = { [state.currentUser]: code === "solo1" };
+  } else {
+    result = {};
+    USERS.forEach((u, i) => { result[u] = code[i] === "1"; });
+  }
+  applyAnswer(card, result).then(() => advanceQueue());
 }
+
 function goToPreviousCard() {
   if (state.qIndex === 0) return;
   state.qIndex--;
   state.rotation.pos = state.qIndex;
   saveRotation(state.studyScope, state.currentUser, state.rotation);
-  state.flipped = false; state.mcSelected = null;
-  if (state.studyMode === "mc") state.mcOptions = buildMcOptions(state.queue[state.qIndex]);
+  state.flipped = false;
   render();
-}
-function handleMcSelect(option) {
-  if (state.mcSelected !== null) return;
-  state.mcSelected = option;
-  const card = state.queue[state.qIndex];
-  // Gözle aynı görünen iki şık (ör. sondaki boşluk farkı) yanlış sayılmasın.
-  const correct = option.trim() === card.back.trim();
-  applyReview(card, correct ? "know" : "wrong").then(() => render());
 }
 
 // =========================================================================
@@ -1601,11 +1439,10 @@ function handleMcSelect(option) {
 // yazı boyutunu kademeli küçültüyoruz; hâlâ taşarsa alt kenara "devamı
 // var" gölgesi konur (CSS: .has-overflow).
 const FIT_STEPS = [21, 19, 17, 15, 13.5, 12];
-const FIT_STEPS_MC = [18, 16.5, 15, 13.5, 12];
 
 function fitOne(box, textEl, steps) {
   if (!box || !textEl) return;
-  const container = box.closest(".face") || box.closest(".mc-question") || box;
+  const container = box.closest(".face") || box;
   container.classList.remove("has-overflow");
   for (const size of steps) {
     textEl.style.fontSize = size + "px";
@@ -1619,8 +1456,7 @@ function fitCardText() {
   document.querySelectorAll(".face-body").forEach((box) => {
     fitOne(box, box.querySelector(".face-text"), FIT_STEPS);
   });
-  const mc = document.querySelector(".mc-text");
-  if (mc) fitOne(mc, mc, FIT_STEPS_MC);
+
 }
 
 // Ekran döndürüldüğünde veya klavye açılıp kapandığında kart boyu değişir.
@@ -1636,14 +1472,14 @@ function render() {
   else if (state.view === "study") appEl.innerHTML = renderStudy();
   else if (state.view === "summary") appEl.innerHTML = renderSummary();
   else if (state.view === "stats") appEl.innerHTML = renderStats();
-  else if (state.view === "practice") appEl.innerHTML = renderPractice();
+
 
   if (state.showNewDeck) appEl.insertAdjacentHTML("beforeend", renderNewDeckModal());
   if (state.showCardForm) appEl.insertAdjacentHTML("beforeend", renderCardFormModal());
   if (state.showImport) appEl.insertAdjacentHTML("beforeend", renderImportModal());
   if (state.showExport) appEl.insertAdjacentHTML("beforeend", renderExportModal());
   if (state.showBackup) appEl.insertAdjacentHTML("beforeend", renderBackupModal());
-  if (state.showPracticeSetup) appEl.insertAdjacentHTML("beforeend", renderPracticeSetupModal());
+
 
   if (state.view === "deck") applyCardSearch();
 
@@ -1665,6 +1501,18 @@ function renderHome() {
     <div class="top-row">
       <div class="brand"><svg class="app-logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kart Kutusu"> <g transform="rotate(-13 26 22)"><rect x="15" y="7" width="22" height="30" rx="4" fill="#e9eefb"/><rect x="19" y="13" width="14" height="2.6" rx="1.3" fill="#93a3bd"/><rect x="19" y="19" width="10" height="2.6" rx="1.3" fill="#93a3bd"/></g> <g transform="rotate(11 38 20)"><rect x="27" y="5" width="22" height="30" rx="4" fill="#eab308"/><rect x="31" y="11" width="14" height="2.6" rx="1.3" fill="#7a5c04"/><rect x="31" y="17" width="10" height="2.6" rx="1.3" fill="#7a5c04"/></g> <path d="M6 30 L32 38 L32 60.4 a8 8 0 0 1 -2 -.6 L9 53.8 A4 4 0 0 1 6 50 Z" fill="#3b82f6"/> <path d="M58 30 L58 50 a4 4 0 0 1 -3 3.8 L34 59.8 a8 8 0 0 1 -2 .6 L32 38 Z" fill="#2563eb"/> <path d="M6 30 L32 22 L58 30 L32 38 Z" fill="#60a5fa"/> </svg><h1 style="font-size:28px;">Kart Kutusu</h1></div>
 
+    </div>
+    <div class="today-box">
+      <div class="today-title">Bugün</div>
+      ${USERS.map((u) => {
+        const t = todayStats(u);
+        return `<div class="today-row">
+          <span class="name">${esc(u)}</span>
+          <span class="num ok">✓ ${t.correct}</span>
+          <span class="num no">✕ ${t.wrong}</span>
+          <span class="num tot">· ${t.total}</span>
+        </div>`;
+      }).join("")}
     </div>
     <p class="muted" style="font-size:14px;margin-bottom:14px;">${myCards.length} kart · ${totalMastered} tanesi ustalaşıldı (${esc(state.currentUser)})</p>
     <div class="nav-row">
@@ -1714,7 +1562,6 @@ function renderDeck() {
   const dc = scopeCards(scope, user);
   const { remaining, total } = rotationCounts(scope, user);
   const mastered = dc.filter((c) => getProgress(c.id, user).box >= MAX_BOX).length;
-  const canMc = dc.length >= 2 && new Set(dc.map((c) => c.back.trim())).size >= 2;
 
   const byFront = (a, b) => a.front.localeCompare(b.front, "tr");
   const stageNew = dc.filter((c) => getProgress(c.id, user).box === 1).sort(byFront);
@@ -1737,13 +1584,18 @@ function renderDeck() {
       <button class="icon-btn danger" data-delete-card="${c.id}">✕</button>
     </div>`;
 
+  // Birlikte / tek başına seçimi: birlikte modda cevap iki kişinin de kaydını
+  // günceller. Tek başına çalışırken bu istenmez — "Onur bildi" demek aynı
+  // zamanda "Fatma bilemedi" demek olurdu.
+  const modeToggle = USERS.length === 2 ? `
+      <div class="visibility-toggle">
+        <button type="button" class="vis-pill ${state.together ? "active" : ""}" data-set-together="1">👥 Birlikte</button>
+        <button type="button" class="vis-pill ${state.together ? "" : "active"}" data-set-together="0">🙋 Tek başıma</button>
+      </div>` : "";
+
   const studyBlock = dc.length > 0 ? `
-      <div class="grid-2" style="margin-bottom:10px;">
-        <button class="btn btn-primary" id="btn-study-flip">🔄 Çevirerek çalış</button>
-        <button class="btn btn-gold" id="btn-study-mc" ${canMc ? "" : "disabled"}>☑️ Çoktan seçmeli</button>
-      </div>
-      ${!canMc ? `<p class="muted" style="font-size:12px;margin-bottom:14px;">Çoktan seçmeli için en az 2 farklı cevaplı kart gerekir.</p>` : ""}
-      ${!retiredView ? `<button class="btn btn-ghost" id="btn-practice" style="margin-bottom:14px;">🎙 Claude ile sesli pratik</button>` : ""}
+      ${modeToggle}
+      <button class="btn btn-primary" id="btn-study" style="margin-bottom:14px;">▶ Çalışmaya başla</button>
     ` : "";
 
   if (retiredView) {
@@ -1867,58 +1719,42 @@ function renderStudy() {
     <div class="progress-bar-outer"><div class="progress-bar-inner" style="width:${pct}%;"></div></div>
     ${state.passToast ? `<div class="pass-toast">🎉 Desteyi baştan sona bitirdin — kartlar yeniden karıştı, yeni tur başlıyor.</div>` : ""}
   `;
-  if (state.studyMode === "flip") {
-    return `
-      ${header}
-      <div class="perspective">
-        <div class="flip-inner ${state.flipped ? "flipped" : ""}" id="flip-card">
-          <div class="face front">
-            <span class="face-label">SORU</span>
-            ${speechSupported ? `<button class="speak-btn" data-speak="${esc(card.front)}" title="Sesli oku">🔊</button>` : ""}
-            ${card.image ? `<img src="${esc(card.image)}" alt="">` : ""}
-            <div class="face-body"><div class="face-text">${renderCardText(card.front)}</div></div>
-          </div>
-          <div class="face back">
-            <span class="face-label">CEVAP</span>
-            ${speechSupported ? `<button class="speak-btn" data-speak="${esc(card.back)}" title="Sesli oku">🔊</button>` : ""}
-            <div class="face-body"><div class="face-text">${renderCardText(card.back)}</div></div>
-          </div>
-        </div>
-      </div>
-      ${!state.flipped
-        ? `<p class="hint">Kartı çevirmek için dokun${keyboardHint()}</p>`
-        : `<div class="answer-grid">
-            <button class="answer-btn" id="btn-wrong" style="background:var(--kirmizi-yumusak);color:var(--kirmizi);border:1.5px solid var(--kirmizi);">✕ Bilmedim</button>
-            <button class="answer-btn" id="btn-know" style="background:var(--yesil-yumusak);color:var(--yesil);border:1.5px solid var(--yesil);">✓ Bildim</button>
-          </div>
-          <button class="master-btn" id="btn-master">✓✓ Kesin öğrendim</button>
-          ${hasKeyboard ? `<p class="hint" style="margin-bottom:10px;"><b>1</b> bilmedim · <b>2</b> bildim · <b>3</b> kesin öğrendim</p>` : ""}`
-      }
-      <div class="nav-actions" style="margin-top:6px;">
-        <button class="btn-secondary" id="btn-undo" ${state.lastAction ? "" : "disabled"}>↺ Geri al</button>
-        <button class="btn-secondary" id="btn-prev-card" ${state.qIndex === 0 ? "disabled" : ""}>‹ Önceki soru</button>
-      </div>
-    `;
-  }
-  const selected = state.mcSelected;
+  const together = togetherMode(card);
   return `
     ${header}
-    <div class="mc-question">
-      ${card.image ? `<img src="${esc(card.image)}" alt="">` : ""}
-      <div class="mc-text">${renderCardText(card.front)}</div>
-      ${speechSupported ? `<button class="speak-btn-inline" data-speak="${esc(card.front)}" title="Sesli oku">🔊 Dinle</button>` : ""}
+    <div class="perspective">
+      <div class="flip-inner ${state.flipped ? "flipped" : ""}" id="flip-card">
+        <div class="face front">
+          <span class="face-label">SORU</span>
+          ${speechSupported ? `<button class="speak-btn" data-speak="${esc(card.front)}" title="Sesli oku">🔊</button>` : ""}
+          ${card.image ? `<img src="${esc(card.image)}" alt="">` : ""}
+          <div class="face-body"><div class="face-text">${renderCardText(card.front)}</div></div>
+        </div>
+        <div class="face back">
+          <span class="face-label">CEVAP</span>
+          ${speechSupported ? `<button class="speak-btn" data-speak="${esc(card.back)}" title="Sesli oku">🔊</button>` : ""}
+          <div class="face-body"><div class="face-text">${renderCardText(card.back)}</div></div>
+        </div>
+      </div>
     </div>
-    ${state.mcOptions.map((opt) => {
-      const isCorrect = opt.trim() === card.back.trim();
-      let style = "";
-      if (selected !== null) {
-        if (isCorrect) style = "background:var(--yesil-yumusak);border-color:var(--yesil);color:var(--yesil);";
-        else if (opt === selected) style = "background:var(--kirmizi-yumusak);border-color:var(--kirmizi);color:var(--kirmizi);";
-      }
-      return `<button class="mc-option" style="${style}" data-mc-option="${esc(opt)}" ${selected !== null ? "disabled" : ""}>${esc(opt)}</button>`;
-    }).join("")}
-    ${selected !== null ? `<button class="btn btn-primary" id="btn-mc-next" style="margin-top:10px;">Devam</button>` : ""}
-    <div class="nav-actions" style="margin-top:10px;">
+    ${!state.flipped
+      ? `<p class="hint">Kartı çevirmek için dokun${keyboardHint()}</p>`
+      : together
+        // Düğmelerin yeri USERS sırasına sabit; kim çalışırsa çalışsın değişmez.
+        ? `<div class="answer-grid">
+            <button class="answer-btn ans-one" data-answer="10">${esc(USERS[0])} bildi</button>
+            <button class="answer-btn ans-one" data-answer="01">${esc(USERS[1])} bildi</button>
+            <button class="answer-btn ans-both" data-answer="11">✓ İkimiz bildik</button>
+            <button class="answer-btn ans-none" data-answer="00">✕ İkimiz de bilemedik</button>
+          </div>
+          ${hasKeyboard ? `<p class="hint" style="margin-bottom:10px;"><b>1</b> ${esc(USERS[0])} · <b>2</b> ${esc(USERS[1])} · <b>3</b> ikimiz · <b>4</b> hiçbirimiz</p>` : ""}`
+        : `<div class="answer-grid">
+            <button class="answer-btn ans-none" data-answer="solo0">✕ Bilmedim</button>
+            <button class="answer-btn ans-both" data-answer="solo1">✓ Bildim</button>
+          </div>
+          ${hasKeyboard ? `<p class="hint" style="margin-bottom:10px;"><b>1</b> bilmedim · <b>2</b> bildim</p>` : ""}`
+    }
+    <div class="nav-actions" style="margin-top:6px;">
       <button class="btn-secondary" id="btn-undo" ${state.lastAction ? "" : "disabled"}>↺ Geri al</button>
       <button class="btn-secondary" id="btn-prev-card" ${state.qIndex === 0 ? "disabled" : ""}>‹ Önceki soru</button>
     </div>
@@ -2149,87 +1985,6 @@ function renderBackupModal() {
     </div>`;
 }
 
-function renderPractice() {
-  const deck = decks.find((d) => d.id === state.activeDeckId);
-  const st = state.practiceStatus;
-  const statusText = {
-    idle: "Konuşmak için mikrofona dokun",
-    listening: "Dinliyorum…",
-    thinking: "Claude düşünüyor…",
-    replying: "Claude yazıyor…",
-    speaking: "Claude konuşuyor…",
-  }[st];
-
-  const bubbles = state.practiceTurns.map((t) => `
-    <div class="chat-row ${t.role}">
-      <div class="chat-bubble ${t.role}">${esc(t.content)}</div>
-    </div>`).join("");
-
-  // Dinlerken duyulanı, cevap akarken gelen metni aynı canlı balonda göster.
-  const liveText = st === "listening" ? state.practiceHeard : state.practiceDraft;
-  const live = (st === "listening" || st === "replying") ? `
-    <div class="chat-row ${st === "listening" ? "user" : "assistant"}">
-      <div class="chat-bubble ${st === "listening" ? "user" : "assistant"} live" id="practice-live">${esc(liveText)}</div>
-    </div>` : "";
-
-  const busy = st !== "idle";
-
-  return `
-    <div class="top-row" style="margin-bottom:10px;">
-      <button id="btn-practice-exit" class="muted" style="background:none;font-size:14px;">‹ Desteye dön</button>
-      <button id="btn-practice-settings" class="muted" style="background:none;font-size:15px;" title="Ayarlar">⚙</button>
-    </div>
-    <h1 style="font-size:20px;margin-bottom:2px;">Sesli pratik</h1>
-    <p class="muted" style="font-size:12.5px;margin-bottom:12px;">${esc(deck ? deck.name : "")} · ${practiceLang() === "tr" ? "Türkçe" : "İngilizce"}</p>
-
-    <div class="visibility-toggle">
-      <button type="button" class="vis-pill ${practiceLang() === "en" ? "active" : ""}" data-practice-lang="en" ${busy ? "disabled" : ""}>🇬🇧 İngilizce</button>
-      <button type="button" class="vis-pill ${practiceLang() === "tr" ? "active" : ""}" data-practice-lang="tr" ${busy ? "disabled" : ""}>🇹🇷 Türkçe</button>
-    </div>
-
-    ${state.practiceError ? `<div class="backup-error">${esc(state.practiceError)}</div>` : ""}
-
-    <div class="chat-scroll" id="practice-scroll">
-      ${state.practiceTurns.length === 0 && !live
-        ? `<div class="empty-state" style="padding:26px 0;">Mikrofona dokun ve destedeki kelimelerle sohbete başla.</div>`
-        : bubbles + live}
-    </div>
-
-    <div class="mic-wrap">
-      <button class="mic-btn ${st}" id="btn-mic" ${st === "idle" || st === "listening" ? "" : "disabled"}>
-        ${st === "listening" ? "⏹" : "🎙"}
-      </button>
-      <p class="hint" style="margin-top:10px;">${esc(statusText)}</p>
-    </div>`;
-}
-
-function renderPracticeSetupModal() {
-  return `
-    <div class="modal-overlay" id="overlay-practice-setup">
-      <div class="modal" id="modal-practice-setup">
-        <div class="modal-body">
-          <div class="modal-head"><h2 style="font-size:18px;">Sesli pratik kurulumu</h2><button id="close-practice-setup" class="muted" style="background:none;">✕</button></div>
-          <p class="muted" style="font-size:12.5px;margin-bottom:14px;line-height:1.55;">
-            Sesli pratik, Claude'a bağlanan küçük bir sunucu gerektirir — API anahtarı
-            tarayıcıya konamaz. Kurulum adımları depodaki <b>worker/README.md</b> dosyasında.
-            Kurduktan sonra aldığın adresi ve belirlediğin parolayı buraya yaz.
-          </p>
-
-          <label class="field-label">Sunucu adresi</label>
-          <input type="url" id="input-practice-url" class="text-input" placeholder="https://kart-kutusu.xxx.workers.dev" value="${esc(practiceUrl())}">
-
-          <label class="field-label">Parola</label>
-          <input type="password" id="input-practice-pass" class="text-input" placeholder="Worker'a verdiğin parola" value="${esc(practicePass())}" style="margin-bottom:0;">
-          <p class="muted" style="font-size:11.5px;margin-top:8px;line-height:1.5;">
-            Bu ikisi yalnızca bu tarayıcıda saklanır, depoya girmez.
-          </p>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-primary" id="btn-save-practice-setup">Kaydet</button>
-        </div>
-      </div>
-    </div>`;
-}
 
 // =========================================================================
 // EVENTS
@@ -2269,10 +2024,15 @@ function bindEvents() {
     if (deck) deleteDeck(deck.id, deck.name);
   };
 
-  const btnStudyFlip = document.getElementById("btn-study-flip");
-  if (btnStudyFlip) btnStudyFlip.onclick = () => startStudy("flip");
-  const btnStudyMc = document.getElementById("btn-study-mc");
-  if (btnStudyMc) btnStudyMc.onclick = () => startStudy("mc");
+  const btnStudy = document.getElementById("btn-study");
+  if (btnStudy) btnStudy.onclick = () => startStudy();
+  document.querySelectorAll("[data-set-together]").forEach((el) => {
+    el.onclick = () => {
+      state.together = el.dataset.setTogether === "1";
+      localStorage.setItem("flashcard-together", state.together ? "1" : "0");
+      render();
+    };
+  });
   document.querySelectorAll("[data-retire-deck]").forEach((el) => {
     el.onclick = (e) => { e.stopPropagation(); retireMastered(el.dataset.retireDeck); };
   });
@@ -2445,50 +2205,6 @@ function bindEvents() {
   const btnRunRestore = document.getElementById("btn-run-restore");
   if (btnRunRestore) btnRunRestore.onclick = runRestore;
 
-  // ---- sesli pratik ----
-  const btnPractice = document.getElementById("btn-practice");
-  if (btnPractice) btnPractice.onclick = () => {
-    if (!recognitionSupported) {
-      alert("Bu tarayıcı ses tanımayı desteklemiyor.\n\nAndroid'de Chrome, iPhone'da Safari dene.");
-      return;
-    }
-    // Sunucu henüz tanımlı değilse önce kurulum penceresini aç.
-    if (!practiceConfigured()) { state.showPracticeSetup = true; render(); return; }
-    startPractice();
-  };
-
-  const btnPracticeExit = document.getElementById("btn-practice-exit");
-  if (btnPracticeExit) btnPracticeExit.onclick = endPractice;
-
-  const btnPracticeSettings = document.getElementById("btn-practice-settings");
-  if (btnPracticeSettings) btnPracticeSettings.onclick = () => { state.showPracticeSetup = true; render(); };
-
-  const btnMic = document.getElementById("btn-mic");
-  if (btnMic) btnMic.onclick = () => {
-    if (state.practiceStatus === "listening") stopListening();
-    else practiceListen();
-  };
-
-  document.querySelectorAll("[data-practice-lang]").forEach((el) => {
-    el.onclick = () => { savePracticeLang(el.dataset.practiceLang); render(); };
-  });
-
-  const overlayPracticeSetup = document.getElementById("overlay-practice-setup");
-  const closePracticeSetup = () => { state.showPracticeSetup = false; pendingRender = false; render(); };
-  if (overlayPracticeSetup) overlayPracticeSetup.onclick = (e) => { if (e.target === overlayPracticeSetup) closePracticeSetup(); };
-  const closePracticeSetupBtn = document.getElementById("close-practice-setup");
-  if (closePracticeSetupBtn) closePracticeSetupBtn.onclick = closePracticeSetup;
-
-  const btnSavePracticeSetup = document.getElementById("btn-save-practice-setup");
-  if (btnSavePracticeSetup) btnSavePracticeSetup.onclick = () => {
-    const url = (document.getElementById("input-practice-url") || {}).value || "";
-    const pass = (document.getElementById("input-practice-pass") || {}).value || "";
-    if (!url.trim() || !pass) { alert("Adres ve parola gerekli."); return; }
-    savePracticeConfig(url, pass);
-    state.showPracticeSetup = false;
-    pendingRender = false;
-    if (state.view === "practice") render(); else startPractice();
-  };
 
   const btnExitStudy = document.getElementById("btn-exit-study");
   if (btnExitStudy) btnExitStudy.onclick = finishSession;
@@ -2507,19 +2223,13 @@ function bindEvents() {
   };
   const flipCard = document.getElementById("flip-card");
   if (flipCard) flipCard.onclick = () => { state.flipped = !state.flipped; render(); };
-  const btnWrong = document.getElementById("btn-wrong");
-  if (btnWrong) btnWrong.onclick = () => handleFlipAnswer("wrong");
-  const btnKnow = document.getElementById("btn-know");
-  if (btnKnow) btnKnow.onclick = () => handleFlipAnswer("know");
-  const btnMaster = document.getElementById("btn-master");
-  if (btnMaster) btnMaster.onclick = () => handleFlipAnswer("master");
+  document.querySelectorAll("[data-answer]").forEach((el) => {
+    el.onclick = () => handleAnswer(el.dataset.answer);
+  });
   const btnPrevCard = document.getElementById("btn-prev-card");
   if (btnPrevCard) btnPrevCard.onclick = goToPreviousCard;
   const btnUndo = document.getElementById("btn-undo");
   if (btnUndo) btnUndo.onclick = undoLastAction;
-  document.querySelectorAll("[data-mc-option]").forEach((el) => { el.onclick = () => handleMcSelect(el.dataset.mcOption); });
-  const btnMcNext = document.getElementById("btn-mc-next");
-  if (btnMcNext) btnMcNext.onclick = advanceQueue;
 
   const btnSummaryDone = document.getElementById("btn-summary-done");
   if (btnSummaryDone) btnSummaryDone.onclick = () => { state.view = "deck"; render(); };
@@ -2536,25 +2246,15 @@ document.addEventListener("keydown", (e) => {
   const card = state.queue[state.qIndex];
   if (!card) return;
 
-  if (state.studyMode === "flip") {
-    if (e.key === " " || e.key === "Enter") {
-      e.preventDefault();
-      state.flipped = !state.flipped; render();
-      return;
-    }
-    if (state.flipped && (e.key === "1" || e.key === "2" || e.key === "3")) {
-      e.preventDefault();
-      handleFlipAnswer(e.key === "1" ? "wrong" : e.key === "2" ? "know" : "master");
-      return;
-    }
-  } else if (state.studyMode === "mc") {
-    const n = Number(e.key);
-    if (state.mcSelected === null && n >= 1 && n <= state.mcOptions.length) {
-      e.preventDefault(); handleMcSelect(state.mcOptions[n - 1]); return;
-    }
-    if (state.mcSelected !== null && (e.key === " " || e.key === "Enter")) {
-      e.preventDefault(); advanceQueue(); return;
-    }
+  if (e.key === " " || e.key === "Enter") {
+    e.preventDefault();
+    state.flipped = !state.flipped; render();
+    return;
+  }
+  // Kısayolların sırası ekrandaki düğmelerle aynı.
+  if (state.flipped) {
+    const codes = togetherMode(card) ? { "1": "10", "2": "01", "3": "11", "4": "00" } : { "1": "solo0", "2": "solo1" };
+    if (codes[e.key]) { e.preventDefault(); handleAnswer(codes[e.key]); return; }
   }
 
   if (e.key === "ArrowLeft") { e.preventDefault(); goToPreviousCard(); }
@@ -2564,6 +2264,10 @@ document.addEventListener("keydown", (e) => {
 });
 
 
+
+// Sekme arkaya alınır veya kapatılırsa biriken günlük sayaçlar kaybolmasın.
+document.addEventListener("visibilitychange", () => { if (document.hidden) commitSessionStats(); });
+window.addEventListener("pagehide", () => { commitSessionStats(); });
 
 render();
 </script>
