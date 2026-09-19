@@ -250,6 +250,42 @@
   .search-count { font-size:11.5px; color:var(--mavi); margin:8px 2px 0; font-weight:600; }
   .search-divider { display:flex; align-items:center; gap:10px; margin:22px 0 14px; font-size:10.5px; letter-spacing:1.5px; text-transform:uppercase; color:var(--sonuk); }
   .search-divider::before, .search-divider::after { content:""; flex:1; height:1px; background:var(--line); }
+  /* ---- Uygulamaya özel bildirim (toast) ve onay penceresi ----
+     Tarayıcının alert/confirm pencereleri yerine. Paletteki kural gereği
+     derinlik gölgeyle değil, zemin tonu ve renkli kenarlıkla veriliyor. */
+  .toast-stack { position:fixed; left:50%; transform:translateX(-50%); bottom:calc(16px + env(safe-area-inset-bottom)); width:calc(100% - 32px); max-width:448px; z-index:70; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
+  /* Açık bir pencere varken alttan çıkan bildirim pencerenin düğmelerini
+     kapatırdı; o durumda bildirim yukarıdan iner. */
+  .toast-stack.top { bottom:auto; top:calc(16px + env(safe-area-inset-top)); }
+  .toast-stack.top .toast { animation-name:toastInTop; }
+  @keyframes toastInTop { from { opacity:0; transform:translateY(-14px) scale(.97); } }
+  .toast { --toast-renk:var(--yesil); pointer-events:auto; display:flex; align-items:flex-start; gap:10px; background:var(--panel-acik); border:1px solid color-mix(in srgb, var(--toast-renk) 45%, transparent); border-left:3px solid var(--toast-renk); border-radius:var(--r-kucuk); padding:11px 14px; cursor:pointer; animation:toastIn .28s cubic-bezier(.2,.8,.3,1); }
+  .toast.error { --toast-renk:var(--kirmizi); }
+  .toast.info { --toast-renk:var(--mavi); }
+  .toast.leaving, .toast-stack.top .toast.leaving { animation:toastOut .2s ease forwards; }
+  .toast-icon { flex-shrink:0; width:20px; height:20px; border-radius:50%; background:color-mix(in srgb, var(--toast-renk) 18%, transparent); color:var(--toast-renk); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; margin-top:1px; }
+  .toast-body { min-width:0; }
+  .toast-title { font-size:13.5px; font-weight:600; color:var(--metin); line-height:1.4; }
+  .toast-detail { font-size:12.5px; color:var(--sonuk); line-height:1.45; margin-top:2px; white-space:pre-line; }
+  @keyframes toastIn { from { opacity:0; transform:translateY(14px) scale(.97); } }
+  @keyframes toastOut { to { opacity:0; transform:translateY(10px); } }
+
+  .dialog-overlay { z-index:60; animation:dialogFade .18s ease; }
+  .dialog { animation:dialogIn .24s cubic-bezier(.2,.8,.3,1); }
+  .dialog-title { font-size:18px; margin-bottom:8px; }
+  .dialog-text { font-size:13.5px; line-height:1.55; color:var(--sonuk); margin:0; }
+  .dialog-text b { color:var(--metin); font-weight:600; }
+  .dialog-text ul { margin:8px 0 0; padding-left:18px; }
+  .dialog-text li { margin:3px 0; }
+  .dialog-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .btn-danger { background:var(--kirmizi); color:#fff; }
+  .btn-success { background:var(--kutu5); color:var(--bg); }
+  @keyframes dialogFade { from { opacity:0; } }
+  @keyframes dialogIn { from { opacity:0; transform:translateY(18px); } }
+  @media (prefers-reduced-motion: reduce) {
+    .toast, .toast.leaving, .dialog-overlay, .dialog { animation:none; }
+  }
+
   .speak-btn { position:absolute; top:12px; right:12px; background:var(--line); border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; font-size:15px; padding:0; line-height:1; }
 
 
@@ -583,6 +619,99 @@ function speak(text) {
 const speechSupported = typeof window !== "undefined" && "speechSynthesis" in window;
 
 
+// =========================================================================
+// BİLDİRİM VE ONAY PENCERESİ
+// Tarayıcının alert/confirm pencereleri yerine uygulamanın kendi tasarımı.
+// İkisi de #app dışında, doğrudan body'de durur; render() içeriği yeniden
+// kurduğunda kaybolmazlar.
+// =========================================================================
+const TOAST_ICON = { ok: "✓", error: "✕", info: "ℹ" };
+const TOAST_MAX = 3;
+let toastStack = null;
+
+// type: "ok" | "error" | "info". Hatalar okunabilsin diye daha uzun kalır;
+// dokununca hemen kapanır.
+function toast(title, { type = "ok", detail = "", duration } = {}) {
+  if (!toastStack) {
+    toastStack = document.createElement("div");
+    toastStack.className = "toast-stack";
+    toastStack.setAttribute("aria-live", "polite");
+    document.body.appendChild(toastStack);
+  }
+  toastStack.classList.toggle("top", !!document.querySelector(".modal-overlay"));
+  const el = document.createElement("div");
+  el.className = `toast ${type}`;
+  el.setAttribute("role", type === "error" ? "alert" : "status");
+  el.innerHTML = `<span class="toast-icon">${TOAST_ICON[type] || TOAST_ICON.info}</span>
+    <div class="toast-body"><div class="toast-title">${esc(title)}</div>${detail ? `<div class="toast-detail">${esc(detail)}</div>` : ""}</div>`;
+  let timer = null;
+  const close = () => {
+    clearTimeout(timer);
+    if (el.classList.contains("leaving")) return;
+    el.classList.add("leaving");
+    setTimeout(() => el.remove(), 200);
+  };
+  el.onclick = close;
+  toastStack.appendChild(el);
+  while (toastStack.children.length > TOAST_MAX) toastStack.firstElementChild.remove();
+  timer = setTimeout(close, duration || (type === "error" ? 6000 : 3500));
+}
+
+// Onay penceresi; Promise<boolean> döner. html çağıranda esc() ile kurulur.
+// tone düğme rengini belirler: "danger" (silme), "success", "gold", "primary".
+// Silme pencerelerinde odak Vazgeç'te başlar ki yanlışlıkla Enter bir şey
+// silmesin. Esc ya da perdeye dokunmak vazgeçer.
+let dialogOpen = false;
+const DIALOG_BTN = { danger: "btn-danger", success: "btn-success", gold: "btn-gold", primary: "btn-primary" };
+function confirmDialog({ title, html, confirmText = "Tamam", tone = "primary" }) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay dialog-overlay";
+    overlay.innerHTML = `
+      <div class="modal dialog" role="alertdialog" aria-modal="true" aria-labelledby="dialog-title">
+        <div class="modal-body">
+          <h2 class="dialog-title" id="dialog-title">${esc(title)}</h2>
+          <div class="dialog-text">${html}</div>
+        </div>
+        <div class="modal-footer dialog-actions">
+          <button type="button" class="btn btn-ghost" data-dialog="cancel">Vazgeç</button>
+          <button type="button" class="btn ${DIALOG_BTN[tone] || DIALOG_BTN.primary}" data-dialog="ok">${esc(confirmText)}</button>
+        </div>
+      </div>`;
+    const cancelBtn = overlay.querySelector('[data-dialog="cancel"]');
+    const okBtn = overlay.querySelector('[data-dialog="ok"]');
+    const prevFocus = document.activeElement;
+
+    const finish = (ok) => {
+      document.removeEventListener("keydown", onKey, true);
+      overlay.remove();
+      dialogOpen = false;
+      if (prevFocus && prevFocus.focus && document.contains(prevFocus)) prevFocus.focus();
+      resolve(ok);
+    };
+    // Yakalama aşamasında dinlenir: çalışma ekranının kısayollarından önce
+    // çalışsın ve Esc pencereyle birlikte çalışmayı da kapatmasın.
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); finish(false); }
+      else if (e.key === "Tab") { e.preventDefault(); (document.activeElement === okBtn ? cancelBtn : okBtn).focus(); }
+    };
+    overlay.onclick = (e) => { if (e.target === overlay) finish(false); };
+    cancelBtn.onclick = () => finish(false);
+    okBtn.onclick = () => finish(true);
+
+    document.addEventListener("keydown", onKey, true);
+    document.body.appendChild(overlay);
+    dialogOpen = true;
+    (tone === "danger" ? cancelBtn : okBtn).focus();
+  });
+}
+
+// Onay metinlerinde kart adı: işaretsiz, tek satır ve kısaltılmış.
+function shortCardText(text, max = 60) {
+  const t = plainCardText(text);
+  return t.length > max ? t.slice(0, max - 1) + "…" : t;
+}
+
 // ---------- klavye ----------
 // Kısayol ipuçları yalnızca fiziksel klavyesi olan cihazlarda gösterilsin.
 const hasKeyboard = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
@@ -767,7 +896,13 @@ async function createDeck() {
 }
 
 async function deleteDeck(deckId, deckName) {
-  if (!confirm(`"${deckName}" destesini silmek istiyor musun? İçindeki tüm kartlar da silinecek.`)) return;
+  const count = cards.filter((c) => c.deckId === deckId).length;
+  const ok = await confirmDialog({
+    title: "Desteyi sil",
+    html: `<b>${esc(deckName)}</b>${/deste(si)?$/i.test(deckName.trim()) ? "" : " destesi"}${count ? ` ve içindeki <b>${count} kart</b>` : ""} kalıcı olarak silinecek. İki kişinin de bu destedeki ilerlemesi gider.`,
+    confirmText: "Sil", tone: "danger",
+  });
+  if (!ok) return;
   const batch = writeBatch(db);
   batch.delete(doc(db, "decks", deckId));
   const deckCardIds = cards.filter((c) => c.deckId === deckId).map((c) => c.id);
@@ -802,7 +937,7 @@ async function saveCardForm() {
     state.showCardForm = false; render();
   } catch (err) {
     console.error(err);
-    alert("Kart kaydedilemedi: " + err.message + "\n\nİnternet bağlantını kontrol et ve tekrar dene.");
+    toast("Kart kaydedilemedi", { type: "error", detail: `İnternet bağlantını kontrol edip tekrar dene.\n(${err.message})` });
     if (btn) { btn.disabled = false; btn.textContent = "Kaydet"; }
   }
 }
@@ -829,7 +964,12 @@ async function retireMastered(deckId) {
   const user = state.currentUser;
   const targets = masteredNotRetired(deckId, user);
   if (targets.length === 0) return;
-  if (!confirm(`${targets.length} ustalaşılan kart "Ustalaşılanlar" listesine ayrılacak ve ana destede artık karşına çıkmayacak. Devam edilsin mi?`)) return;
+  const ok = await confirmDialog({
+    title: "Ustalaşılanları ayır",
+    html: `<b>${targets.length} ustalaşılan kart</b> “Ustalaşılanlar” listesine ayrılacak ve ana destede artık senin sıranda çıkmayacak. İstediğinde <b>↩</b> ile geri alabilirsin.`,
+    confirmText: "Ayır", tone: "success",
+  });
+  if (!ok) return;
   await setRetired(targets, user, true);
 }
 
@@ -1065,11 +1205,13 @@ async function runImport() {
   state.showImport = false; state.importText = "";
   render();
 
-  const parts = [];
-  parts.push(fresh.length > 0 ? `${fresh.length} kart eklendi.` : "Yeni kart eklenmedi.");
-  if (duplicates > 0) parts.push(`${duplicates} kart zaten bu destede vardı, yeniden eklenmedi — seviyeleri yine de uygulandı.`);
-  parts.push(bumped > 0 ? `${bumped} seviye bir kutu yükseltildi.` : "Hiçbir seviye değişmedi (+ işareti yok).");
-  alert(parts.join("\n"));
+  const details = [];
+  if (duplicates > 0) details.push(`${duplicates} kart zaten vardı, yeniden eklenmedi.`);
+  if (bumped > 0) details.push(`${bumped} seviye bir kutu yükseldi.`);
+  toast(fresh.length > 0 ? `${fresh.length} kart eklendi` : "Yeni kart eklenmedi", {
+    type: fresh.length > 0 || bumped > 0 ? "ok" : "info",
+    detail: details.join("\n"),
+  });
 }
 
 // =========================================================================
@@ -1152,12 +1294,17 @@ async function runRestore() {
   if (!data || state.restoreBusy) return;
 
   const total = data.decks.length + data.cards.length + data.progress.length + data.stats.length;
-  if (!confirm(
-    `Yedekteki ${total} kayıt geri yüklenecek.\n\n` +
-    `• Aynı id'ye sahip kayıtların üzerine yedekteki hali yazılır.\n` +
-    `• Şu anda var olup yedekte olmayan hiçbir şey SİLİNMEZ.\n\n` +
-    `Devam etmeden önce mevcut halin bir yedeği bilgisayarına indirilecek.`
-  )) return;
+  const ok = await confirmDialog({
+    title: "Yedekten geri yükle",
+    html: `Yedekteki <b>${total} kayıt</b> geri yüklenecek.
+      <ul>
+        <li>Aynı kayıtların üzerine yedekteki hali yazılır.</li>
+        <li>Şu an olup yedekte olmayan hiçbir şey <b>silinmez</b>.</li>
+        <li>Başlamadan önce mevcut halin yedeği cihazına indirilir.</li>
+      </ul>`,
+    confirmText: "Geri yükle", tone: "gold",
+  });
+  if (!ok || state.restoreBusy) return;
 
   state.restoreBusy = true; state.restoreError = null; render();
 
@@ -1182,7 +1329,7 @@ async function runRestore() {
     state.restorePreview = null;
     state.showBackup = false;
     render();
-    alert(`Geri yükleme tamamlandı. ${total} kayıt geri yüklendi.`);
+    toast("Geri yükleme tamamlandı", { detail: `${total} kayıt geri yüklendi.` });
   } catch (err) {
     console.error(err);
     state.restoreBusy = false;
@@ -1299,10 +1446,15 @@ function advanceQueue() {
   }, 3200);
 }
 
-function deleteStudyCard() {
+async function deleteStudyCard() {
   const card = state.queue[state.qIndex];
-  if (!card) return;
-  if (!confirm(`"${card.front}" kartını silmek istiyor musun?`)) return;
+  if (!card || animating) return;
+  const ok = await confirmDialog({
+    title: "Kartı sil",
+    html: `<b>${esc(shortCardText(card.front))}</b> kartı ve iki kişinin bu karttaki ilerlemesi kalıcı olarak silinecek.`,
+    confirmText: "Sil", tone: "danger",
+  });
+  if (!ok || state.queue[state.qIndex] !== card) return;
   deleteCard(card.id);
   const rot = state.rotation;
   rot.order = rot.order.filter((id) => id !== card.id);
@@ -2261,12 +2413,16 @@ function bindEvents() {
     };
   });
   document.querySelectorAll("[data-delete-card]").forEach((el) => {
-    el.onclick = () => {
+    el.onclick = async () => {
       const c = cards.find((x) => x.id === el.dataset.deleteCard);
       if (!c) return;
       // Kart ve ona bağlı tüm ilerleme kalıcı olarak silinir — önce sor.
-      if (!confirm(`"${c.front}" kartını silmek istiyor musun?\n\nBu kartın ilerlemesi de silinecek ve geri alınamaz.`)) return;
-      deleteCard(c.id);
+      const ok = await confirmDialog({
+        title: "Kartı sil",
+        html: `<b>${esc(shortCardText(c.front))}</b> kartı ve iki kişinin bu karttaki ilerlemesi kalıcı olarak silinecek. Bu geri alınamaz.`,
+        confirmText: "Sil", tone: "danger",
+      });
+      if (ok) deleteCard(c.id);
     };
   });
 
@@ -2413,7 +2569,7 @@ function bindEvents() {
 // ---------- klavye kısayolları ----------
 // Yalnızca çalışma ekranında ve hiçbir pencere açık değilken çalışır.
 document.addEventListener("keydown", (e) => {
-  if (state.view !== "study" || modalOpen()) return;
+  if (state.view !== "study" || modalOpen() || dialogOpen || e.defaultPrevented) return;
   if (animating) { e.preventDefault(); return; }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const tag = (document.activeElement && document.activeElement.tagName) || "";

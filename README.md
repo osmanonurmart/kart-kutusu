@@ -202,6 +202,19 @@ Ayrılan kartlar ana ekranda `<deste> · Ustalaşılanlar` olarak görünür ve
 1–5 kutu ölçeği yalnızca görsel bir göstergedir ve `streak`'ten türetilir:
 0→1, 1→2, 2→3, 3–4→4, 5→5.
 
+## Bildirimler ve onay pencereleri
+
+Tarayıcının hazır `alert` / `confirm` pencereleri kullanılmaz; yerine
+uygulamanın kendi tasarımı var (`toast()` ve `confirmDialog()`).
+
+- **Bildirim:** ✓ yeşil (başarı), ✕ kırmızı (hata), ℹ mavi (bilgi). Alttan
+  kayarak çıkar, ~3,5 sn sonra (hatalar 6 sn) kaybolur, dokununca kapanır.
+  Açık bir pencere varken düğmeleri kapatmasın diye üstten iner. En çok 3
+  tanesi üst üste görünür.
+- **Onay penceresi:** Vazgeç + renkli eylem düğmesi (silme kırmızı, ayırma
+  yeşil, geri yükleme sarı). Silmelerde odak Vazgeç'te başlar; Esc ya da
+  perdeye dokunmak vazgeçer. Açıkken çalışma ekranı kısayolları çalışmaz.
+
 ## Klavye kısayolları (çalışma ekranı)
 
 | Tuş | İşlev |
