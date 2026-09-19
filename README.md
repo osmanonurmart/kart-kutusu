@@ -195,17 +195,23 @@ Ayrılan kartlar ana ekranda `<deste> · Ustalaşılanlar` olarak görünür ve
 
 Cevap verilince kart beklemeden geçer: Firestore yazmaları arkada yapılır
 (yerel kopya anında güncellenir, çevrimdışıysa yazma kuyruğa girer). Kartın
-kenarı parlar ve kart kayarak çıkar. Olumlu sonuç öne çıkar: birlikte
-modda biri bile bildiyse kart yeşil parlayıp sağa kayar, yalnızca *İkimiz de
-bilemedik* kırmızı parlayıp sola gider. Tek başına modda *Bildim* sağa,
-*Bilmedim* sola. Animasyon sürerken gelen
+kenarı parlar (biri bile bildiyse yeşil, kimse bilemediyse kırmızı) ve kart
+bilen kişinin düğmesinin tarafına uçar:
+
+| Düğme | Yön |
+|---|---|
+| `<USERS[0]> bildi` | sola |
+| `<USERS[1]> bildi` | sağa |
+| `İkimiz bildik` | yukarı |
+| `İkimiz de bilemedik` | aşağı düşer |
+| `Bildim` / `Bilmedim` (tek başına) | sağa / sola | Animasyon sürerken gelen
 yeniden çizimler ertelenir, ikinci dokunuş ve kısayollar yok sayılır.
 Sistemde "hareketi azalt" açıksa yalnızca kısa bir solma olur.
 
 Çalışma ekranının üstündeki `✓ / ✕` sayacı bu seansta ekrandaki kişinin
 doğru / yanlış sayısıdır. Yöne değil kişinin kendi sonucuna bakar:
-`<USERS[1]> bildi` denince kart sağa kayar ama ekranda `USERS[0]` seçiliyse
-onun `✕` sayısı artar.
+`<USERS[1]> bildi` denince kart yeşil parlar ama ekranda `USERS[0]`
+seçiliyse onun `✕` sayısı artar.
 
 Çalışmadan çıkarken günlük sayaçlar iki kullanıcı için aynı anda, beklemeden
 yazılır; özet ekranı hemen açılır.

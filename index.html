@@ -176,16 +176,20 @@
   @keyframes cardEnter { from { opacity:0; transform:translateY(10px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
   .perspective { animation:cardEnter .38s cubic-bezier(.2,.8,.3,1); transition:transform .25s cubic-bezier(.2,.8,.3,1); }
 
-  /* Cevap animasyonu: önce kenar yeşil/kırmızı parlar, sonra kart yana
-     kayıp çıkar (bildi → sağa, bilemedi → sola). */
+  /* Cevap animasyonu: önce kenar yeşil/kırmızı parlar, sonra kart basılan
+     düğmenin kişisine doğru çıkar (yönler handleAnswer'da). */
   .face { transition:border-color .12s ease, box-shadow .12s ease; }
   .perspective.glow-ok .face { border-color:var(--yesil); box-shadow:0 0 0 2px var(--yesil-yumusak), 0 0 28px var(--yesil-yumusak); }
   .perspective.glow-no .face { border-color:var(--kirmizi); box-shadow:0 0 0 2px var(--kirmizi-yumusak), 0 0 28px var(--kirmizi-yumusak); }
   @keyframes exitRight { to { transform:translateX(120%) rotate(12deg); opacity:0; } }
   @keyframes exitLeft { to { transform:translateX(-120%) rotate(-12deg); opacity:0; } }
+  @keyframes exitUp { to { transform:translateY(-70%) scale(.92); opacity:0; } }
+  @keyframes exitDown { to { transform:translateY(55%) rotate(4deg); opacity:0; } }
   @keyframes exitFade { to { opacity:0; } }
   .perspective.exit-right { animation:exitRight .23s cubic-bezier(.4,0,1,1) forwards; }
   .perspective.exit-left { animation:exitLeft .23s cubic-bezier(.4,0,1,1) forwards; }
+  .perspective.exit-up { animation:exitUp .23s cubic-bezier(.4,0,1,1) forwards; }
+  .perspective.exit-down { animation:exitDown .23s cubic-bezier(.4,0,1,1) forwards; }
   .perspective.exit-fade { animation:exitFade .15s ease forwards; }
   /* Kaydırarak cevap: sürüklerken kart parmağı gecikmesiz takip etsin;
      bırakınca yukarıdaki transition ile yerine yaylanır. Yatay hareketi
@@ -1466,19 +1470,30 @@ function handleAnswer(code, fromSwipe) {
   // animasyon sonuna ertelensin.
   animating = true;
   applyAnswer(card, result);
-  // Olumlu sonuç öne çıkar: biri bile bildiyse kart yeşil parlar ve sağa
-  // kayar; yalnızca kimse bilemediyse sola. Sayaç ise ekrandaki kişinin
-  // kendi sonucunu sayar ("Fatma bildi" → Onur'un ✕'u artar).
+  // Biri bile bildiyse kart yeşil parlar. Sayaç ise ekrandaki kişinin kendi
+  // sonucunu sayar ("Fatma bildi" → Onur'un ✕'u artar).
   const anyKnew = Object.values(result).some(Boolean);
   bumpTally(!!result[state.currentUser]);
-  playExit(anyKnew, fromSwipe, advanceQueue);
+  playExit(exitDirection(code), anyKnew, fromSwipe, advanceQueue);
+}
+
+// Kart, bilen kişinin düğmesinin tarafına uçar: USERS[0] bildi → sola,
+// USERS[1] bildi → sağa, ikimiz → yukarı, hiçbirimiz → aşağı düşer.
+// Tek başına modda Bilmedim (sol düğme) sola, Bildim (sağ düğme) sağa.
+function exitDirection(code) {
+  if (code === "solo1") return "right";
+  if (code === "solo0") return "left";
+  const knew = [...code].map((c) => c === "1");
+  if (knew.every(Boolean)) return "up";
+  if (!knew.some(Boolean)) return "down";
+  return knew[0] ? "left" : "right";
 }
 
 const EXIT_GLOW_MS = 120;
 const EXIT_SLIDE_MS = 230;
 const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-function playExit(ok, fromSwipe, done) {
+function playExit(dir, ok, fromSwipe, done) {
   const el = document.querySelector(".perspective");
   const finish = () => { animating = false; pendingRender = false; done(); };
   if (!el) { finish(); return; }
@@ -1486,7 +1501,7 @@ function playExit(ok, fromSwipe, done) {
   el.classList.add(ok ? "glow-ok" : "glow-no");
   if (reduceMotion) { el.classList.add("exit-fade"); setTimeout(finish, 150); return; }
   setTimeout(() => {
-    el.classList.add(ok ? "exit-right" : "exit-left");
+    el.classList.add("exit-" + dir);
     setTimeout(finish, EXIT_SLIDE_MS);
   }, fromSwipe ? 0 : EXIT_GLOW_MS);
 }
