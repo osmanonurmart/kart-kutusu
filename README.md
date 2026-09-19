@@ -202,6 +202,34 @@ Ayrılan kartlar ana ekranda `<deste> · Ustalaşılanlar` olarak görünür ve
 1–5 kutu ölçeği yalnızca görsel bir göstergedir ve `streak`'ten türetilir:
 0→1, 1→2, 2→3, 3–4→4, 5→5.
 
+## Günlük görev (🎯)
+
+Ana ekranda "Kart Kutusu" yazısının yanındaki `🎯 N` düğmesi, sınava kadar
+**tüm kartları** (bütün desteler, ustalaşılanlar dahil) tekrar tekrar
+dolaştıran kişiye özel günlük listeyi açar. N bugün kalan kart sayısıdır,
+görev bitince `🎯 ✓` olur.
+
+- Kartlar sabit bir sırada (deste adı, sonra eklenme zamanı) baştan sona
+  dolaşılır; sona gelince tur sayısı artar ve baştan başlanır. Yeni kartlar
+  sıranın sonuna eklenir.
+- Günün listesi, kartların **tahmini sürelerinin toplamı günlük süreyi**
+  (varsayılan 90 dk) dolduracak kadar karttan kurulur; bir gün en fazla bir
+  tur olabilir. Liste gün içinde sabittir.
+- Kart başına süre: `4 sn + (ön + arka karakter) / 15 sn` (+3 sn görsel).
+  20 cevaptan sonra ölçülen gerçek hızla oranlanarak düzeltilir
+  (`stats/<kullanıcı>.speed`).
+- Bilinemeyen kart aynı gün tekrar sorulmaz, **ertesi günün başına** eklenir.
+  O gün yetişmeyen kartlar da öne taşınır; bunlar günlük süreye dahildir.
+- Deste ekranından çalışırken ya da birlikte modda karşı tarafın listesinde
+  olan bir kart cevaplanırsa, o kişinin görevinden de düşer.
+- Görev ekranında sınava kalan gün, bugünkü ilerleme ve kalan süre, tur, bu
+  tempoyla her kartın kaç kez tekrar edileceği (yetmiyorsa gereken en az
+  günlük süre) görünür. Günlük süre ve sınav tarihi buradan değişir.
+
+Veri `stats/<kullanıcı>.dailyPlan` alanında durur (`order`, `pos`, `pass`,
+`day`, `list`, `done`, `failed`, `backlog`, `dayStart`, `minutes`,
+`examDate`); deste sıralarından bağımsızdır.
+
 ## Bildirimler ve onay pencereleri
 
 Tarayıcının hazır `alert` / `confirm` pencereleri kullanılmaz; yerine

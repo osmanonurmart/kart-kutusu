@@ -286,6 +286,20 @@
     .toast, .toast.leaving, .dialog-overlay, .dialog { animation:none; }
   }
 
+  /* ---- Günlük görev ---- */
+  .goal-btn { display:flex; align-items:center; gap:6px; flex-shrink:0; padding:7px 11px; border-radius:999px; background:var(--mavi-yumusak); border:1.5px solid var(--mavi); color:var(--mavi); font-size:14px; font-weight:700; }
+  .goal-btn .num { font-family:'IBM Plex Mono',monospace; }
+  .goal-btn.done { background:var(--yesil-yumusak); border-color:var(--yesil); color:var(--yesil); }
+  .daily-hero { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:16px; margin-bottom:14px; }
+  .daily-count { font-family:'IBM Plex Mono',monospace; font-size:30px; font-weight:700; line-height:1; }
+  .daily-sub { font-size:12.5px; color:var(--sonuk); margin-top:6px; line-height:1.5; }
+  .daily-note { font-size:12.5px; line-height:1.5; border-radius:var(--r-kucuk); padding:9px 11px; margin-bottom:14px; }
+  .daily-note.warn { background:var(--sari-yumusak); border:1px solid var(--sari); color:var(--sari); }
+  .daily-note.ok { background:var(--yesil-yumusak); border:1px solid var(--yesil); color:var(--yesil); }
+  .daily-settings { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:14px; margin-top:18px; }
+  .min-pills { display:grid; grid-template-columns:repeat(6, 1fr); gap:6px; margin-bottom:14px; }
+  .min-pills .vis-pill { padding:8px 2px; }
+
   .speak-btn { position:absolute; top:12px; right:12px; background:var(--line); border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; font-size:15px; padding:0; line-height:1; }
 
 
@@ -851,6 +865,8 @@ function getRotation(scope, user) {
 
 // Sırayı hem yerel kopyaya (ekran anında güncellensin) hem Firestore'a yazar.
 async function saveRotation(scope, user, rot) {
+  // Günlük görevin sırası dailyPlan'da tutulur, oturum kuyruğu kaydedilmez.
+  if (scope === DAILY_SCOPE) return;
   const value = { order: [...rot.order], pos: rot.pos };
   const s = statsList.find((x) => x.id === user);
   if (s) s.rotations = { ...(s.rotations || {}), [scope]: value };
@@ -885,6 +901,231 @@ function rotationCounts(scope, user) {
   const rot = getRotation(scope, user);
   const total = rot.order.length;
   return { remaining: total === 0 || rot.pos >= total ? total : total - rot.pos, total };
+}
+
+// =========================================================================
+// GÜNLÜK GÖREV (SINAV PLANI)
+// Sınav tarihine kadar TÜM kartlar (bütün desteler, ustalaşılanlar dahil)
+// sabit bir sırada baştan sona tekrar tekrar dolaşılır. Her günün listesi,
+// kartların tahmini sürelerinin toplamı günlük süreyi (varsayılan 90 dk)
+// dolduracak kadar karttan kurulur; önce önceki günlerden kalanlar
+// (bilinemeyen ya da o gün yetişmeyen kartlar), kalan süreye sıradakiler.
+// Liste gün içinde sabittir; ertesi gün ilk açılışta yenisi kurulur.
+//
+// Nerede duruyor: stats/{kullanıcı}.dailyPlan
+//   order     tüm kartların sabit sırası      pos/pass  sıradaki kart ve tur
+//   day/list  bugünün tarihi ve listesi      done      bugün cevaplananlar
+//   failed    bugün bilinemeyenler (yarına)  backlog   önceki günlerden kalanlar
+//   dayStart  günün başındaki pos/pass/backlog; süre değişince liste bununla
+//             yeniden kurulur
+// Deste sıralarından (rotations) tamamen bağımsızdır.
+// =========================================================================
+const DAILY_SCOPE = "::daily";
+const DEFAULT_EXAM_DATE = "2026-10-01";
+const DEFAULT_DAILY_MINUTES = 90;
+const DAILY_MINUTE_OPTIONS = [30, 45, 60, 90, 120, 180];
+// Kart başına süre tahmini: çevirme + düğme için sabit süre, üstüne gözle
+// okuma hızıyla ön+arka yüz metni. 20 cevaptan sonra kişinin gerçek hızıyla
+// düzeltilir (speedFactor).
+const EST_BASE_SEC = 4;
+const EST_CHARS_PER_SEC = 15;
+const EST_IMAGE_SEC = 3;
+const SPEED_MIN_SAMPLES = 20;
+
+function estimateSeconds(card) {
+  if (!card) return 0;
+  const chars = (card.front || "").length + (card.back || "").length;
+  return EST_BASE_SEC + chars / EST_CHARS_PER_SEC + (card.image ? EST_IMAGE_SEC : 0);
+}
+// Ölçülen / tahmin edilen süre oranı. Veri azken 1 (düzeltme yok).
+function speedFactor(user) {
+  const sp = getStats(user).speed || {};
+  const p = state.pendingDaily[user] || {};
+  const n = (sp.n || 0) + (p.n || 0);
+  const pred = (sp.pred || 0) + (p.pred || 0);
+  const act = (sp.act || 0) + (p.act || 0);
+  if (n < SPEED_MIN_SAMPLES || pred <= 0) return 1;
+  return Math.min(3, Math.max(0.5, act / pred));
+}
+function fmtDuration(sec) {
+  const min = Math.max(1, Math.round(sec / 60));
+  if (min < 60) return `${min} dk`;
+  const h = Math.floor(min / 60), m = min % 60;
+  return m ? `${h} sa ${m} dk` : `${h} sa`;
+}
+// Bugünden sınav gününe kadar kalan gün (sınav günü hariç). 19 Eylül → 1 Ekim = 12.
+function daysUntil(iso) {
+  const [y, m, d] = (iso || DEFAULT_EXAM_DATE).split("-").map(Number);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((new Date(y, m - 1, d) - today) / 86400000);
+}
+function cardMap() { return new Map(cards.map((c) => [c.id, c])); }
+
+// Planın kart sırası: deste adı, sonra eklenme zamanı. Yeni kartlar sona eklenir.
+function planPool(user) {
+  const deckName = new Map(decks.map((d) => [d.id, d.name || ""]));
+  return allVisibleCards(user).slice().sort((a, b) =>
+    (deckName.get(a.deckId) || "").localeCompare(deckName.get(b.deckId) || "", "tr")
+    || (a.createdAt || 0) - (b.createdAt || 0)
+    || a.id.localeCompare(b.id));
+}
+
+// Günün listesini dayStart'tan kurar (yan etkisi yalnızca plan nesnesine).
+function fillDay(plan, user) {
+  const byId = cardMap();
+  const factor = speedFactor(user);
+  const budget = (plan.minutes || DEFAULT_DAILY_MINUTES) * 60;
+  const start = plan.dayStart;
+  const total = plan.order.length;
+  const list = [];
+  const inList = new Set();
+  let used = 0;
+  const take = (id) => {
+    const c = byId.get(id);
+    if (!c || inList.has(id)) return false;
+    list.push(id); inList.add(id);
+    used += estimateSeconds(c) * factor;
+    return true;
+  };
+  const backlog = start.backlog.filter((id) => byId.has(id));
+  let carried = 0;
+  while (backlog.length && (list.length === 0 || used < budget)) { if (take(backlog.shift())) carried++; }
+  let pos = Math.min(start.pos, total), pass = start.pass;
+  for (let guard = 0; total && (list.length === 0 || used < budget) && guard < total; guard++) {
+    if (pos >= total) { pos = 0; pass++; }
+    take(plan.order[pos++]);
+  }
+  plan.list = list; plan.backlog = backlog; plan.pos = pos; plan.pass = pass;
+  plan.carriedCount = carried;
+}
+
+// Kullanıcının bugünkü planını döndürür. Saf fonksiyondur: kaydetmez, kayıtlı
+// planı da değiştirmez; changed=true ise çağıran saveDailyPlan ile yazar.
+// Rastgelelik olmadığı için kaydedilmeden tekrar çağrılsa da aynı sonucu verir.
+function buildDailyPlan(user) {
+  const saved = getStats(user).dailyPlan;
+  const plan = saved ? JSON.parse(JSON.stringify(saved)) : {
+    examDate: DEFAULT_EXAM_DATE, minutes: DEFAULT_DAILY_MINUTES,
+    order: [], pos: 0, pass: 1, backlog: [], day: null, list: [], done: [], failed: [], carriedCount: 0,
+  };
+  let changed = !saved;
+
+  // Sırayı güncel kartlarla uzlaştır: silinenler düşer, yeniler sona eklenir.
+  const pool = planPool(user).map((c) => c.id);
+  const live = new Set(pool);
+  const order = [];
+  let pos = 0;
+  plan.order.forEach((id, i) => { if (!live.has(id)) return; if (i < plan.pos) pos++; order.push(id); });
+  const known = new Set(order);
+  for (const id of pool) if (!known.has(id)) order.push(id);
+  if (order.length !== plan.order.length || pos !== plan.pos) changed = true;
+  plan.order = order; plan.pos = pos;
+
+  const today = todayStr();
+  if (plan.day !== today) {
+    // Yeni gün: dün bilinemeyenler ve yetişmeyenler öne, sonra eski borçlar.
+    const doneSet = new Set(plan.done);
+    const owed = [...plan.failed, ...plan.list.filter((id) => !doneSet.has(id)), ...plan.backlog];
+    const backlog = [...new Set(owed)].filter((id) => live.has(id));
+    plan.dayStart = { pos: plan.pos, pass: plan.pass, backlog };
+    fillDay(plan, user);
+    plan.day = today; plan.done = []; plan.failed = [];
+    changed = true;
+  }
+  return { plan, changed };
+}
+
+function saveDailyPlan(user, plan) {
+  const s = statsList.find((x) => x.id === user);
+  if (s) s.dailyPlan = plan; else statsList.push({ id: user, dailyPlan: plan });
+  setDoc(doc(db, "stats", user), { dailyPlan: plan }, { merge: true })
+    .catch((err) => console.error("Günlük görev kaydedilemedi:", err));
+}
+
+// Görev ekranı ve ana ekran düğmesi için hesaplanan değerler.
+function dailyInfo(user) {
+  if (!allLoaded()) return null;
+  const { plan } = buildDailyPlan(user);
+  const byId = cardMap();
+  const factor = speedFactor(user);
+  const sec = (id) => estimateSeconds(byId.get(id)) * factor;
+  const list = plan.list.filter((id) => byId.has(id));
+  const doneSet = new Set(plan.done);
+  const remaining = list.filter((id) => !doneSet.has(id));
+  const total = plan.order.length;
+  const avgSec = total ? plan.order.reduce((a, id) => a + sec(id), 0) / total : 0;
+  const days = daysUntil(plan.examDate);
+  // Bir günün listesi en fazla bir tur olabilir (fillDay), tahmin de öyle.
+  const dailyCap = avgSec ? Math.min(total, (plan.minutes * 60) / avgSec) : 0;
+  const passProgress = (plan.pass - 1) + (total ? plan.pos / total : 0);
+  const futureDays = Math.max(0, days - 1);
+  const projected = total ? passProgress + (futureDays * dailyCap) / total : 0;
+  // Sınava kadar tüm kartları en az bir kez görmek için gereken günlük süre.
+  const needMin = total && projected < 1 && futureDays > 0
+    ? Math.ceil(((1 - passProgress) * total * avgSec) / futureDays / 60) : 0;
+  return {
+    plan, total, days, projected, needMin,
+    listCount: list.length, doneCount: list.length - remaining.length, remaining,
+    remainingSec: remaining.reduce((a, id) => a + sec(id), 0),
+    listSec: list.reduce((a, id) => a + sec(id), 0),
+    passPct: total ? Math.round((plan.pos / total) * 100) : 0,
+  };
+}
+
+// Cevaplanan kart kişinin bugünkü listesindeyse görevden düşer; bilinemediyse
+// yarına kalır. Görevi hiç açmamış kullanıcıda bir şey yapmaz. Geri al için
+// önceki hâli döndürür.
+function markDaily(user, cardId, correct) {
+  if (!getStats(user).dailyPlan) return null;
+  const { plan, changed } = buildDailyPlan(user);
+  if (!plan.list.includes(cardId)) { if (changed) saveDailyPlan(user, plan); return null; }
+  const before = { user, done: [...plan.done], failed: [...plan.failed] };
+  if (!plan.done.includes(cardId)) plan.done.push(cardId);
+  if (!correct && !plan.failed.includes(cardId)) plan.failed.push(cardId);
+  saveDailyPlan(user, plan);
+  return before;
+}
+
+// Görev ekranından günlük süre değişince bugünün listesi yeniden kurulur;
+// bugün çalışılmış kartlar listede kalır.
+function setDailyMinutes(minutes) {
+  const user = state.currentUser;
+  const { plan } = buildDailyPlan(user);
+  plan.minutes = minutes;
+  fillDay(plan, user);
+  const inList = new Set(plan.list);
+  plan.list = [...plan.done.filter((id) => !inList.has(id)), ...plan.list];
+  saveDailyPlan(user, plan);
+  render();
+}
+function setExamDate(iso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return;
+  const user = state.currentUser;
+  const { plan } = buildDailyPlan(user);
+  plan.examDate = iso;
+  saveDailyPlan(user, plan);
+  render();
+}
+
+function openDailyView() {
+  const user = state.currentUser;
+  if (allLoaded()) {
+    const { plan, changed } = buildDailyPlan(user);
+    if (changed) saveDailyPlan(user, plan);
+  }
+  state.view = "daily"; render();
+}
+
+function startDailyStudy() {
+  const user = state.currentUser;
+  const { plan, changed } = buildDailyPlan(user);
+  if (changed) saveDailyPlan(user, plan);
+  const byId = cardMap();
+  const doneSet = new Set(plan.done);
+  const remaining = plan.list.filter((id) => byId.has(id) && !doneSet.has(id));
+  if (remaining.length === 0) return;
+  beginStudy(DAILY_SCOPE, { order: remaining, pos: 0 });
 }
 
 // ---------- firestore CRUD ----------
@@ -1388,7 +1629,11 @@ function startStudy() {
   // Sıra bir önceki oturumda bitmişse yeni tur baştan başlar.
   if (rot.pos >= rot.order.length) rot = { order: shuffled(rot.order), pos: 0, dirty: true };
   if (rot.dirty) saveRotation(scope, user, rot);
+  beginStudy(scope, rot);
+}
 
+// Deste çalışması ve günlük görev ortak başlangıcı.
+function beginStudy(scope, rot) {
   state.studyScope = scope;
   state.rotation = rot;
   state.qIndex = rot.pos;
@@ -1397,6 +1642,7 @@ function startStudy() {
   state.sessionCorrect = 0; state.sessionWrong = 0;
   state.lastAction = null;
   state.requeueCurrent = false; state.passToast = false;
+  state.shownCardId = null;
   state.view = "study"; render();
 }
 
@@ -1416,6 +1662,9 @@ function syncQueueFromRotation() {
 //  - Sıranın sonuna gelinince kartlar yeniden karışır, tur baştan başlar.
 function advanceQueue() {
   const rot = state.rotation;
+  const daily = state.studyScope === DAILY_SCOPE;
+  // Günlük görevde bilinemeyen kart aynı gün tekrar sorulmaz, yarına kalır.
+  if (daily) state.requeueCurrent = false;
   if (state.requeueCurrent) {
     const [id] = rot.order.splice(state.qIndex, 1);
     rot.order.push(id);
@@ -1424,6 +1673,8 @@ function advanceQueue() {
   } else {
     state.qIndex++;
   }
+
+  if (daily && state.qIndex >= rot.order.length) { finishSession(); return; }
 
   let wrapped = false;
   if (state.qIndex >= rot.order.length) {
@@ -1470,10 +1721,20 @@ async function deleteStudyCard() {
 // ---------- günlük sayaçlar ----------
 // Her cevap iki kişiyi birden etkileyebildiği için sayaçlar kişi bazında
 // bellekte birikir; çalışmadan çıkarken (ve sekme kapanırken) yazılır.
+function pendingFor(user) {
+  return state.pendingDaily[user] || (state.pendingDaily[user] = { correct: 0, wrong: 0, reviewed: 0, pred: 0, act: 0, n: 0 });
+}
 function bumpDaily(user, correct) {
-  const d = state.pendingDaily[user] || (state.pendingDaily[user] = { correct: 0, wrong: 0, reviewed: 0 });
+  const d = pendingFor(user);
   if (correct) d.correct++; else d.wrong++;
   d.reviewed++;
+}
+// Kart ekrana gelince başlayan süre; süre tahminini kişinin gerçek hızına
+// göre düzeltmek için. Uzun duraklamalar (telefon bırakıldı vb.) 90 sn'de kesilir.
+function recordSpeed(user, card, seconds) {
+  if (!(seconds > 0.5)) return;
+  const d = pendingFor(user);
+  d.pred += estimateSeconds(card); d.act += Math.min(seconds, 90); d.n++;
 }
 
 // Bugünün sayıları. Kayıtlı tarih bugün değilse değerler dünden kalmadır ve
@@ -1507,10 +1768,16 @@ function commitSessionStats() {
       todayDate: today,
       todayCorrect: (fresh ? s.todayCorrect || 0 : 0) + d.correct,
       todayWrong: (fresh ? s.todayWrong || 0 : 0) + d.wrong,
+      speed: {
+        pred: ((s.speed && s.speed.pred) || 0) + (d.pred || 0),
+        act: ((s.speed && s.speed.act) || 0) + (d.act || 0),
+        n: ((s.speed && s.speed.n) || 0) + (d.n || 0),
+      },
     }, { merge: true }).catch((err) => {
       console.error(err);
-      const back = state.pendingDaily[user] || (state.pendingDaily[user] = { correct: 0, wrong: 0, reviewed: 0 });
+      const back = pendingFor(user);
       back.correct += d.correct; back.wrong += d.wrong; back.reviewed += d.reviewed;
+      back.pred += d.pred || 0; back.act += d.act || 0; back.n += d.n || 0;
     });
   }
 }
@@ -1550,12 +1817,16 @@ function consumeForOther(user, deckId, cardId) {
 // yazmayı onSnapshot ile anında yansıtır, çevrimdışıysa kuyruğa alır.
 function applyAnswer(card, result) {
   const active = state.currentUser;
-  const undo = { progress: [], rotations: [], daily: [], queueIndex: state.qIndex, rotOrder: [...state.rotation.order] };
+  const undo = { progress: [], rotations: [], daily: [], dailyPlans: [], queueIndex: state.qIndex, rotOrder: [...state.rotation.order] };
 
   for (const user of USERS) {
     const correct = result[user];
     if (correct === undefined) continue;
     if (!canSee(card, user)) continue;
+    // Kart kişinin bugünkü görev listesindeyse görevden düşer (deste
+    // çalışmasında ve birlikte modda karşı taraf için de).
+    const planBefore = markDaily(user, card.id, correct);
+    if (planBefore) undo.dailyPlans.push(planBefore);
     const cur = getProgress(card.id, user);
     if (cur.retired && user !== active) continue;   // ayırmış, dokunma
 
@@ -1595,6 +1866,11 @@ function undoLastAction() {
     else deleteDoc(doc(db, "progress", p.key)).catch(onErr);
   }
   for (const r of a.rotations) saveRotation(r.scope, r.user, { order: r.order, pos: r.pos });
+  for (const d of a.dailyPlans || []) {
+    const { plan } = buildDailyPlan(d.user);
+    plan.done = d.done; plan.failed = d.failed;
+    saveDailyPlan(d.user, plan);
+  }
   for (const d of a.daily) {
     const cur = state.pendingDaily[d.user];
     if (!cur) continue;
@@ -1632,6 +1908,9 @@ function handleAnswer(code, fromSwipe) {
   // Bayrak yazmalardan ÖNCE açılır: yerel snapshot hemen gelirse render'ı
   // animasyon sonuna ertelensin.
   animating = true;
+  if (state.cardShownAt && state.shownCardId === card.id) {
+    recordSpeed(state.currentUser, card, (performance.now() - state.cardShownAt) / 1000);
+  }
   applyAnswer(card, result);
   // Biri bile bildiyse kart yeşil parlar. Sayaç ise ekrandaki kişinin kendi
   // sonucunu sayar ("Fatma bildi" → Onur'un ✕'u artar).
@@ -1781,6 +2060,7 @@ function render() {
   else if (state.view === "study") appEl.innerHTML = renderStudy();
   else if (state.view === "summary") appEl.innerHTML = renderSummary();
   else if (state.view === "stats") appEl.innerHTML = renderStats();
+  else if (state.view === "daily") appEl.innerHTML = renderDaily();
 
 
   if (state.showNewDeck) appEl.insertAdjacentHTML("beforeend", renderNewDeckModal());
@@ -1793,13 +2073,28 @@ function render() {
   if (state.view === "deck") applyCardSearch();
 
   bindEvents();
-  if (state.view === "study") fitCardText();
+  if (state.view === "study") {
+    fitCardText();
+    // Yeni kart ekrana geldiği an: cevap süresini ölçmek için.
+    const c = state.queue[state.qIndex];
+    if (c && c.id !== state.shownCardId) { state.shownCardId = c.id; state.cardShownAt = performance.now(); }
+  }
 }
 
 function renderUserSwitch() {
   return `<div class="user-switch">
     ${USERS.map((u) => `<button class="user-pill ${u === state.currentUser ? "active" : ""}" data-select-user="${esc(u)}">${esc(u)}</button>`).join("")}
   </div>`;
+}
+
+// "Kart Kutusu" yazısının yanındaki 🎯 düğmesi: bugün kalan görev kartı.
+function renderGoalButton() {
+  const info = dailyInfo(state.currentUser);
+  if (!info || info.total === 0) return "";
+  const left = info.remaining.length;
+  return left === 0
+    ? `<button class="goal-btn done" id="btn-open-daily" title="Günlük görev tamam">🎯 <span class="num">✓</span></button>`
+    : `<button class="goal-btn" id="btn-open-daily" title="Günlük görev: bugün kalan ${left} kart · ~${fmtDuration(info.remainingSec)}">🎯 <span class="num">${left}</span></button>`;
 }
 
 function renderHome() {
@@ -1809,7 +2104,7 @@ function renderHome() {
     ${renderUserSwitch()}
     <div class="top-row">
       <div class="brand"><svg class="app-logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kart Kutusu"> <g transform="rotate(-13 26 22)"><rect x="15" y="7" width="22" height="30" rx="4" fill="#e9eefb"/><rect x="19" y="13" width="14" height="2.6" rx="1.3" fill="#93a3bd"/><rect x="19" y="19" width="10" height="2.6" rx="1.3" fill="#93a3bd"/></g> <g transform="rotate(11 38 20)"><rect x="27" y="5" width="22" height="30" rx="4" fill="#eab308"/><rect x="31" y="11" width="14" height="2.6" rx="1.3" fill="#7a5c04"/><rect x="31" y="17" width="10" height="2.6" rx="1.3" fill="#7a5c04"/></g> <path d="M6 30 L32 38 L32 60.4 a8 8 0 0 1 -2 -.6 L9 53.8 A4 4 0 0 1 6 50 Z" fill="#3b82f6"/> <path d="M58 30 L58 50 a4 4 0 0 1 -3 3.8 L34 59.8 a8 8 0 0 1 -2 .6 L32 38 Z" fill="#2563eb"/> <path d="M6 30 L32 22 L58 30 L32 38 Z" fill="#60a5fa"/> </svg><h1 style="font-size:28px;">Kart Kutusu</h1></div>
-
+      ${renderGoalButton()}
     </div>
     <div class="today-box">
       <div class="today-title">Bugün</div>
@@ -2024,7 +2319,7 @@ function renderStudy() {
       <div style="display:flex;align-items:center;gap:12px;">
         <button id="btn-edit-study-card" class="muted" style="background:none;font-size:15px;" title="Bu kartı düzenle">✎</button>
         <button id="btn-delete-study-card" class="muted" style="background:none;font-size:15px;color:var(--kirmizi);" title="Bu kartı sil">🗑</button>
-        <span class="mono muted" style="font-size:12px;">${state.qIndex + 1} / ${state.queue.length} · ${esc(state.currentUser)}</span>
+        <span class="mono muted" style="font-size:12px;">${state.studyScope === DAILY_SCOPE ? "🎯 " : ""}${state.qIndex + 1} / ${state.queue.length} · ${esc(state.currentUser)}</span>
       </div>
     </div>
     <div class="progress-bar-outer"><div class="progress-bar-inner" style="width:${pct}%;"></div></div>
@@ -2072,20 +2367,78 @@ function renderStudy() {
   `;
 }
 
+function renderDaily() {
+  const user = state.currentUser;
+  const info = dailyInfo(user);
+  const back = `<button class="back-link" id="btn-back-home">‹ Ana ekrana dön</button>`;
+  if (!info) return `${back}<div class="empty-state">Yükleniyor…</div>`;
+  if (info.total === 0) return `${back}<h1 style="font-size:24px;margin-bottom:14px;">🎯 Günlük görev</h1><div class="empty-state">Henüz kart yok.</div>`;
+  const { plan, days, remaining, listCount, doneCount } = info;
+  const pct = listCount ? Math.round((doneCount / listCount) * 100) : 0;
+  const finished = remaining.length === 0;
+  const projected = info.projected.toLocaleString("tr-TR", { maximumFractionDigits: 1 });
+  const dayText = days > 1 ? `Sınava <b>${days} gün</b>` : days === 1 ? "Sınav <b>yarın</b>" : days === 0 ? "Sınav <b>bugün</b>" : "Sınav tarihi <b>geçti</b>";
+
+  const modeToggle = USERS.length === 2 ? `
+      <div class="visibility-toggle">
+        <button type="button" class="vis-pill ${state.together ? "active" : ""}" data-set-together="1">👥 Birlikte</button>
+        <button type="button" class="vis-pill ${state.together ? "" : "active"}" data-set-together="0">🙋 Tek başıma</button>
+      </div>` : "";
+
+  return `
+    ${back}
+    <h1 style="font-size:24px;margin-bottom:4px;">🎯 Günlük görev</h1>
+    <p class="muted" style="font-size:14px;margin-bottom:14px;">${dayText} · ${esc(user)}</p>
+
+    <div class="daily-hero">
+      <div class="row">
+        <div>
+          <div class="daily-count" style="color:${finished ? "var(--yesil)" : "var(--metin)"};">${doneCount}<span class="muted" style="font-size:18px;"> / ${listCount}</span></div>
+          <div class="daily-sub">${finished ? "Bugünkü görev tamam 🎉" : `Kalan <b style="color:var(--metin);">${remaining.length} kart · ~${fmtDuration(info.remainingSec)}</b>`}</div>
+        </div>
+        <span class="due-badge">~${fmtDuration(info.listSec)}</span>
+      </div>
+      <div class="progress-track" style="margin-top:12px;"><div class="progress-fill" style="width:${pct}%;"></div></div>
+      <div class="daily-sub">
+        ${plan.carriedCount ? `Önceki günlerden kalan <b>${plan.carriedCount}</b> kart listenin başında. ` : ""}
+        Tur <b>${plan.pass}</b> · %${info.passPct} · toplam ${info.total} kart
+      </div>
+    </div>
+
+    ${days <= 0 ? `<div class="daily-note warn">Sınav tarihi geçmiş görünüyor; aşağıdan güncelleyebilirsin.</div>`
+      : info.needMin ? `<div class="daily-note warn">Bu süreyle sınava kadar kartların hepsini bir kez bile göremezsin. Tümünü en az bir kez görmek için günde en az <b>${info.needMin} dk</b> gerekiyor.</div>`
+      : `<div class="daily-note ok">Bu tempoyla sınava kadar her kart yaklaşık <b>${projected} kez</b> tekrar edilir.</div>`}
+
+    ${finished ? "" : `${modeToggle}<button class="btn btn-primary" id="btn-daily-start">▶ ${doneCount ? "Devam et" : "Göreve başla"} · ${remaining.length} kart</button>`}
+
+    <div class="daily-settings">
+      <label class="field-label">Günlük süre</label>
+      <div class="min-pills">
+        ${DAILY_MINUTE_OPTIONS.map((m) => `<button type="button" class="vis-pill ${plan.minutes === m ? "active" : ""}" data-daily-min="${m}">${m} dk</button>`).join("")}
+      </div>
+      <label class="field-label" for="input-exam-date">Sınav tarihi</label>
+      <input type="date" class="text-input" id="input-exam-date" value="${esc(plan.examDate)}" style="margin-bottom:8px;color-scheme:dark;">
+      <p class="muted" style="font-size:11.5px;line-height:1.5;margin:0;">
+        Liste her gün, kartların uzunluğuna göre tahmini süreleri günlük süreyi dolduracak kadar karttan kurulur.
+        Bilinemeyen kartlar ertesi günün başına eklenir. Süre tahmini 20 cevaptan sonra senin gerçek hızına göre ayarlanır.
+      </p>
+    </div>`;
+}
+
 function renderSummary() {
   const total = state.sessionCorrect + state.sessionWrong;
   const pct = total ? Math.round((state.sessionCorrect / total) * 100) : 0;
   return `
     <div style="text-align:center;padding-top:30px;">
       <div class="summary-icon">🔥</div>
-      <h1 style="font-size:24px;margin-bottom:4px;">Seans tamamlandı</h1>
+      <h1 style="font-size:24px;margin-bottom:4px;">${state.studyScope === DAILY_SCOPE && dailyInfo(state.currentUser)?.remaining.length === 0 ? "Bugünkü görev tamam 🎉" : "Seans tamamlandı"}</h1>
       <p class="muted" style="font-size:14px;margin-bottom:26px;">${esc(state.currentUser)}</p>
       <div class="grid-2" style="margin-bottom:22px;">
         <div class="stat-box"><div class="stat-num" style="color:var(--yesil);">${state.sessionCorrect}</div><p class="muted" style="font-size:12px;margin-top:4px;">Doğru</p></div>
         <div class="stat-box"><div class="stat-num" style="color:var(--kirmizi);">${state.sessionWrong}</div><p class="muted" style="font-size:12px;margin-top:4px;">Yanlış</p></div>
       </div>
       <p class="muted" style="font-size:12px;margin-bottom:20px;">Başarı oranı: %${pct}</p>
-      <button class="btn btn-primary" id="btn-summary-done">Desteye dön</button>
+      <button class="btn btn-primary" id="btn-summary-done">${state.studyScope === DAILY_SCOPE ? "Göreve dön" : "Desteye dön"}</button>
     </div>
   `;
 }
@@ -2563,7 +2916,18 @@ function bindEvents() {
   if (btnUndo) btnUndo.onclick = undoLastAction;
 
   const btnSummaryDone = document.getElementById("btn-summary-done");
-  if (btnSummaryDone) btnSummaryDone.onclick = () => { state.view = "deck"; render(); };
+  if (btnSummaryDone) btnSummaryDone.onclick = () => { state.view = state.studyScope === DAILY_SCOPE ? "daily" : "deck"; render(); };
+
+  // ---- günlük görev ----
+  const btnOpenDaily = document.getElementById("btn-open-daily");
+  if (btnOpenDaily) btnOpenDaily.onclick = openDailyView;
+  const btnDailyStart = document.getElementById("btn-daily-start");
+  if (btnDailyStart) btnDailyStart.onclick = startDailyStudy;
+  document.querySelectorAll("[data-daily-min]").forEach((el) => {
+    el.onclick = () => setDailyMinutes(Number(el.dataset.dailyMin));
+  });
+  const inputExamDate = document.getElementById("input-exam-date");
+  if (inputExamDate) inputExamDate.onchange = () => setExamDate(inputExamDate.value);
 }
 
 // ---------- klavye kısayolları ----------
