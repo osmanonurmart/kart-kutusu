@@ -174,7 +174,36 @@
   .nav-actions .btn-secondary { border-radius:var(--r-kucuk); padding:11px; font-weight:600; font-size:13px; background:var(--panel); color:var(--metin); border:1px solid var(--line); }
   .nav-actions .btn-secondary:disabled { opacity:0.35; }
   @keyframes cardEnter { from { opacity:0; transform:translateY(10px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
-  .perspective { animation:cardEnter .38s cubic-bezier(.2,.8,.3,1); }
+  .perspective { animation:cardEnter .38s cubic-bezier(.2,.8,.3,1); transition:transform .25s cubic-bezier(.2,.8,.3,1); }
+
+  /* Cevap animasyonu: önce kenar yeşil/kırmızı parlar, sonra kart yana
+     kayıp çıkar (bildi → sağa, bilemedi → sola). */
+  .face { transition:border-color .12s ease, box-shadow .12s ease; }
+  .perspective.glow-ok .face { border-color:var(--yesil); box-shadow:0 0 0 2px var(--yesil-yumusak), 0 0 28px var(--yesil-yumusak); }
+  .perspective.glow-no .face { border-color:var(--kirmizi); box-shadow:0 0 0 2px var(--kirmizi-yumusak), 0 0 28px var(--kirmizi-yumusak); }
+  @keyframes exitRight { to { transform:translateX(120%) rotate(12deg); opacity:0; } }
+  @keyframes exitLeft { to { transform:translateX(-120%) rotate(-12deg); opacity:0; } }
+  @keyframes exitFade { to { opacity:0; } }
+  .perspective.exit-right { animation:exitRight .23s cubic-bezier(.4,0,1,1) forwards; }
+  .perspective.exit-left { animation:exitLeft .23s cubic-bezier(.4,0,1,1) forwards; }
+  .perspective.exit-fade { animation:exitFade .15s ease forwards; }
+  /* Kaydırarak cevap: sürüklerken kart parmağı gecikmesiz takip etsin;
+     bırakınca yukarıdaki transition ile yerine yaylanır. Yatay hareketi
+     tarayıcı değil biz yakalıyoruz, dikey kaydırma metin için serbest. */
+  .perspective.dragging { transition:none; }
+  .perspective.swipeable { user-select:none; -webkit-user-select:none; }
+  .perspective.swipeable .flip-inner, .perspective.swipeable .face-body { touch-action:pan-y; }
+
+  /* Seans sayacı; cevap verilince ilgili sayı kısa bir zıplama yapar. */
+  .tally { display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:12.5px; font-weight:600; }
+  .tally.ok { color:var(--yesil); }
+  .tally.no { color:var(--kirmizi); }
+  @keyframes tallyBump { 0% { transform:scale(1); } 40% { transform:scale(1.5); } 100% { transform:scale(1); } }
+  .tally.bump { animation:tallyBump .32s cubic-bezier(.2,.8,.3,1); }
+  @media (prefers-reduced-motion: reduce) {
+    .perspective, .face { transition:none; }
+    .tally.bump { animation:none; }
+  }
   .hint { text-align:center; font-size:12px; color:var(--sonuk); }
 
   .progress-bar-outer { width:100%; height:4px; border-radius:var(--r-kucuk); background:var(--line); overflow:hidden; margin-bottom:20px; }
@@ -507,7 +536,11 @@ const state = {
 
 function modalOpen() { return state.showNewDeck || state.showCardForm || state.showImport || state.showExport || state.showBackup; }
 let pendingRender = false;
+// Cevap animasyonu sürerken gelen onSnapshot render'ları ertelenir; yoksa DOM
+// baştan kurulur ve animasyon yarıda kesilir. Animasyon bitince tek render.
+let animating = false;
 function maybeRender() {
+  if (animating) { pendingRender = true; return; }
   // Yedek modalında metin girişi yok; sayılar canlı kalsın diye yeniden çizilebilir.
   if (state.showBackup && !state.restoreBusy) { render(); return; }
   if (modalOpen()) pendingRender = true; else render();
@@ -1290,7 +1323,10 @@ function todayStats(user) {
 
 // Biriken sayaçları Firestore'a yazar. Yarıda kesilen seansta da çağrılır;
 // bir kullanıcının yazması başarısız olursa yalnızca onunki kuyrukta kalır.
-async function commitSessionStats() {
+// Yazmalar beklenmez ve iki kullanıcınınki aynı anda gönderilir: sırayla
+// beklemek hem "Çık"ı bekletiyordu hem de sekme kapanırken ikinci kişinin
+// yazmasının hiç başlamamasına yol açabiliyordu.
+function commitSessionStats() {
   const pending = state.pendingDaily;
   state.pendingDaily = {};
   const today = todayStr();
@@ -1298,24 +1334,22 @@ async function commitSessionStats() {
     if (!d.reviewed) continue;
     const s = getStats(user);
     const fresh = s.todayDate === today;
-    try {
-      await setDoc(doc(db, "stats", user), {
-        lastStudyDate: today,
-        totalReviewed: (s.totalReviewed || 0) + d.reviewed,
-        todayDate: today,
-        todayCorrect: (fresh ? s.todayCorrect || 0 : 0) + d.correct,
-        todayWrong: (fresh ? s.todayWrong || 0 : 0) + d.wrong,
-      }, { merge: true });
-    } catch (err) {
+    setDoc(doc(db, "stats", user), {
+      lastStudyDate: today,
+      totalReviewed: (s.totalReviewed || 0) + d.reviewed,
+      todayDate: today,
+      todayCorrect: (fresh ? s.todayCorrect || 0 : 0) + d.correct,
+      todayWrong: (fresh ? s.todayWrong || 0 : 0) + d.wrong,
+    }, { merge: true }).catch((err) => {
       console.error(err);
       const back = state.pendingDaily[user] || (state.pendingDaily[user] = { correct: 0, wrong: 0, reviewed: 0 });
       back.correct += d.correct; back.wrong += d.wrong; back.reviewed += d.reviewed;
-    }
+    });
   }
 }
 
-async function finishSession() {
-  await commitSessionStats();
+function finishSession() {
+  commitSessionStats();
   state.view = "summary"; render();
 }
 
@@ -1323,7 +1357,7 @@ async function finishSession() {
 // sayılır: kart imlecin hemen gerisine alınır, böylece kalanı bir azalır.
 // Zaten geçmişse sırasına hiç dokunulmaz. Değiştirmeden önceki hâli geri al
 // için döndürülür.
-async function consumeForOther(user, deckId, cardId) {
+function consumeForOther(user, deckId, cardId) {
   const scope = scopeOf(deckId, false);
   const rot = getRotation(scope, user);
   const before = { scope, user, order: [...rot.order], pos: rot.pos };
@@ -1336,14 +1370,18 @@ async function consumeForOther(user, deckId, cardId) {
     if (rot.pos >= rot.order.length) { rot.order = shuffled(rot.order); rot.pos = 0; }
     rot.dirty = true;
   }
-  if (rot.dirty) await saveRotation(scope, user, rot);
+  // saveRotation yerel kopyayı hemen günceller; Firestore yazması beklenmez.
+  if (rot.dirty) saveRotation(scope, user, rot);
   return before;
 }
 
 // result: { <kullanıcı>: true|false } — true = o kişi doğru bildi. Etkilenen
 // her kullanıcının streak'i, günlük sayacı ve (aktif olmayanın) sırası
 // güncellenir. Kartı göremeyen ya da ustalaşılanlara ayırmış kullanıcı atlanır.
-async function applyAnswer(card, result) {
+// Yazmalar beklenmez: setDoc'un promise'i sunucu onayına kadar dönmediği için
+// eskiden bir sonraki kart 2–4 ağ gidiş-dönüşü bekliyordu. Firestore yerel
+// yazmayı onSnapshot ile anında yansıtır, çevrimdışıysa kuyruğa alır.
+function applyAnswer(card, result) {
   const active = state.currentUser;
   const undo = { progress: [], rotations: [], daily: [], queueIndex: state.qIndex, rotOrder: [...state.rotation.order] };
 
@@ -1359,12 +1397,12 @@ async function applyAnswer(card, result) {
     undo.progress.push({ key, prevExisted: !!existingDoc, prevData: existingDoc ? { ...existingDoc } : null });
 
     const streak = correct ? Math.min(MASTER_STREAK, cur.streak + 1) : 0;
-    await setDoc(doc(db, "progress", key), {
+    setDoc(doc(db, "progress", key), {
       streak, box: boxFromStreak(streak), retired: cur.retired,
       correctCount: cur.correctCount + (correct ? 1 : 0),
       wrongCount: cur.wrongCount + (correct ? 0 : 1),
       user, cardId: card.id, deckId: card.deckId, updatedAt: Date.now(),
-    }, { merge: false });
+    }, { merge: false }).catch((err) => console.error("İlerleme kaydedilemedi:", err));
 
     bumpDaily(user, correct);
     undo.daily.push({ user, correct });
@@ -1374,20 +1412,22 @@ async function applyAnswer(card, result) {
       if (correct) state.sessionCorrect++; else state.sessionWrong++;
     } else if (correct) {
       // Bilemediyse kart karşı tarafın sırasında olduğu yerde kalır.
-      undo.rotations.push(await consumeForOther(user, card.deckId, card.id));
+      undo.rotations.push(consumeForOther(user, card.deckId, card.id));
     }
   }
   state.lastAction = undo;
 }
 
-async function undoLastAction() {
+function undoLastAction() {
   const a = state.lastAction;
-  if (!a) return;
+  if (!a || animating) return;
+  // Aynı istemcinin yazmaları sırayla uygulanır; beklemeye gerek yok.
+  const onErr = (err) => console.error("Geri alma kaydedilemedi:", err);
   for (const p of a.progress) {
-    if (p.prevExisted) await setDoc(doc(db, "progress", p.key), p.prevData, { merge: false });
-    else await deleteDoc(doc(db, "progress", p.key));
+    if (p.prevExisted) setDoc(doc(db, "progress", p.key), p.prevData, { merge: false }).catch(onErr);
+    else deleteDoc(doc(db, "progress", p.key)).catch(onErr);
   }
-  for (const r of a.rotations) await saveRotation(r.scope, r.user, { order: r.order, pos: r.pos });
+  for (const r of a.rotations) saveRotation(r.scope, r.user, { order: r.order, pos: r.pos });
   for (const d of a.daily) {
     const cur = state.pendingDaily[d.user];
     if (!cur) continue;
@@ -1409,7 +1449,10 @@ async function undoLastAction() {
 
 // data-answer değerleri: "11" ikimiz, "10" yalnız USERS[0], "01" yalnız
 // USERS[1], "00" hiçbirimiz; "solo1"/"solo0" tek başına çalışırken.
-function handleAnswer(code) {
+// fromSwipe: kart zaten parmakla yana çekilmiş ve renklenmiş; parlama
+// beklemesi atlanır, kart bulunduğu yerden uçup gider.
+function handleAnswer(code, fromSwipe) {
+  if (animating) return;   // çift dokunuş / animasyon sırasında tuş
   const card = state.queue[state.qIndex];
   if (!card) return;
   let result;
@@ -1419,11 +1462,99 @@ function handleAnswer(code) {
     result = {};
     USERS.forEach((u, i) => { result[u] = code[i] === "1"; });
   }
-  applyAnswer(card, result).then(() => advanceQueue());
+  // Bayrak yazmalardan ÖNCE açılır: yerel snapshot hemen gelirse render'ı
+  // animasyon sonuna ertelensin.
+  animating = true;
+  applyAnswer(card, result);
+  // Olumlu sonuç öne çıkar: biri bile bildiyse kart yeşil parlar ve sağa
+  // kayar; yalnızca kimse bilemediyse sola. Sayaç ise ekrandaki kişinin
+  // kendi sonucunu sayar ("Fatma bildi" → Onur'un ✕'u artar).
+  const anyKnew = Object.values(result).some(Boolean);
+  bumpTally(!!result[state.currentUser]);
+  playExit(anyKnew, fromSwipe, advanceQueue);
+}
+
+const EXIT_GLOW_MS = 120;
+const EXIT_SLIDE_MS = 230;
+const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function playExit(ok, fromSwipe, done) {
+  const el = document.querySelector(".perspective");
+  const finish = () => { animating = false; pendingRender = false; done(); };
+  if (!el) { finish(); return; }
+  el.classList.remove("glow-ok", "glow-no");
+  el.classList.add(ok ? "glow-ok" : "glow-no");
+  if (reduceMotion) { el.classList.add("exit-fade"); setTimeout(finish, 150); return; }
+  setTimeout(() => {
+    el.classList.add(ok ? "exit-right" : "exit-left");
+    setTimeout(finish, EXIT_SLIDE_MS);
+  }, fromSwipe ? 0 : EXIT_GLOW_MS);
+}
+
+// Sayaç animasyon sürerken yeniden çizilmediği için DOM'da elle güncellenir.
+function bumpTally(ok) {
+  const el = document.querySelector(ok ? ".tally.ok" : ".tally.no");
+  if (!el) return;
+  el.textContent = ok ? `✓ ${state.sessionCorrect}` : `✕ ${state.sessionWrong}`;
+  el.classList.remove("bump");
+  void el.offsetWidth;   // animasyonu yeniden başlatmak için reflow
+  el.classList.add("bump");
+}
+
+// Kaydırarak cevap (yalnızca iki düğmeli modda ve kart çevrilmişken).
+// 10px'ten kısa hareket dokunma sayılır ve kartı çevirir; dikey hareket
+// uzun metnin kaydırılmasına bırakılır.
+const SWIPE_THRESHOLD = 90;
+function bindSwipe(flipEl) {
+  const wrap = flipEl.closest(".perspective");
+  const card = state.queue[state.qIndex];
+  const enabled = !!wrap && state.flipped && !!card && !togetherMode(card);
+  let pointerId = null, startX = 0, startY = 0, dx = 0, dragging = false, moved = false;
+
+  flipEl.onclick = () => {
+    if (moved) { moved = false; return; }   // sürüklemenin ardından gelen tıklamayı yut
+    if (animating) return;
+    state.flipped = !state.flipped; render();
+  };
+  if (!enabled) return;
+  wrap.classList.add("swipeable");
+
+  flipEl.onpointerdown = (e) => {
+    if (animating || e.button > 0) return;
+    pointerId = e.pointerId; startX = e.clientX; startY = e.clientY;
+    dx = 0; dragging = false; moved = false;
+  };
+  flipEl.onpointermove = (e) => {
+    if (e.pointerId !== pointerId) return;
+    const mx = e.clientX - startX, my = e.clientY - startY;
+    if (!dragging) {
+      if (Math.abs(mx) < 10 && Math.abs(my) < 10) return;
+      if (Math.abs(my) > Math.abs(mx)) { pointerId = null; return; }
+      dragging = true; moved = true;
+      try { flipEl.setPointerCapture(e.pointerId); } catch {}
+      wrap.classList.add("dragging");
+    }
+    dx = mx;
+    wrap.style.transform = `translateX(${dx}px) rotate(${dx / 20}deg)`;
+    wrap.classList.toggle("glow-ok", dx > SWIPE_THRESHOLD / 2);
+    wrap.classList.toggle("glow-no", dx < -SWIPE_THRESHOLD / 2);
+  };
+  const end = (e) => {
+    if (e.pointerId !== pointerId) return;
+    pointerId = null;
+    if (!dragging) return;
+    dragging = false;
+    wrap.classList.remove("dragging");
+    if (Math.abs(dx) >= SWIPE_THRESHOLD) { handleAnswer(dx > 0 ? "solo1" : "solo0", true); return; }
+    wrap.style.transform = "";
+    wrap.classList.remove("glow-ok", "glow-no");
+  };
+  flipEl.onpointerup = end;
+  flipEl.onpointercancel = end;
 }
 
 function goToPreviousCard() {
-  if (state.qIndex === 0) return;
+  if (state.qIndex === 0 || animating) return;
   state.qIndex--;
   state.rotation.pos = state.qIndex;
   saveRotation(state.studyScope, state.currentUser, state.rotation);
@@ -1709,6 +1840,8 @@ function renderStudy() {
     <div class="top-row" style="margin-bottom:6px;">
       <div style="display:flex;align-items:center;gap:12px;">
         <button id="btn-exit-study" class="muted" style="background:none;font-size:14px;">✕ Çık</button>
+        <span class="tally ok">✓ ${state.sessionCorrect}</span>
+        <span class="tally no">✕ ${state.sessionWrong}</span>
       </div>
       <div style="display:flex;align-items:center;gap:12px;">
         <button id="btn-edit-study-card" class="muted" style="background:none;font-size:15px;" title="Bu kartı düzenle">✎</button>
@@ -2207,7 +2340,7 @@ function bindEvents() {
 
 
   const btnExitStudy = document.getElementById("btn-exit-study");
-  if (btnExitStudy) btnExitStudy.onclick = finishSession;
+  if (btnExitStudy) btnExitStudy.onclick = () => { if (!animating) finishSession(); };
   const btnDeleteStudyCard = document.getElementById("btn-delete-study-card");
   if (btnDeleteStudyCard) btnDeleteStudyCard.onclick = deleteStudyCard;
   const btnEditStudyCard = document.getElementById("btn-edit-study-card");
@@ -2222,7 +2355,7 @@ function bindEvents() {
     state.showCardForm = true; render();
   };
   const flipCard = document.getElementById("flip-card");
-  if (flipCard) flipCard.onclick = () => { state.flipped = !state.flipped; render(); };
+  if (flipCard) bindSwipe(flipCard);
   document.querySelectorAll("[data-answer]").forEach((el) => {
     el.onclick = () => handleAnswer(el.dataset.answer);
   });
@@ -2239,6 +2372,7 @@ function bindEvents() {
 // Yalnızca çalışma ekranında ve hiçbir pencere açık değilken çalışır.
 document.addEventListener("keydown", (e) => {
   if (state.view !== "study" || modalOpen()) return;
+  if (animating) { e.preventDefault(); return; }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const tag = (document.activeElement && document.activeElement.tagName) || "";
   if (tag === "INPUT" || tag === "TEXTAREA") return;
