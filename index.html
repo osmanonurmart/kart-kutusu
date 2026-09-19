@@ -212,14 +212,10 @@
 
   .progress-bar-outer { width:100%; height:4px; border-radius:var(--r-kucuk); background:var(--line); overflow:hidden; margin-bottom:20px; }
   .progress-bar-inner { height:100%; background:var(--mavi); }
-  .undo-btn { font-size:12px; color:var(--sonuk); background:none; text-decoration:underline; display:block; margin:0 auto 16px; }
   .summary-icon { width:80px; height:80px; border-radius:50%; margin:0 auto 18px; background:var(--sari-yumusak); display:flex; align-items:center; justify-content:center; font-size:34px; }
   .stat-box { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:16px; text-align:center; }
   .stat-num { font-family:'IBM Plex Mono',monospace; font-size:26px; font-weight:700; }
   .empty-state { text-align:center; padding:40px 0; color:var(--sonuk); font-size:14px; }
-  .setup-box { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:20px; margin-top:40px; line-height:1.6; font-size:14px; }
-  .setup-box code { background:var(--panel-acik); padding:2px 6px; border-radius:var(--r-kucuk); font-family:'IBM Plex Mono',monospace; font-size:12.5px; }
-  .setup-box ol { padding-left:20px; }
   .loading-screen { display:flex; align-items:center; justify-content:center; min-height:80vh; color:var(--sonuk); font-size:14px; }
   .user-stat-card { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:18px; margin-bottom:14px; }
   .user-stat-head { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
@@ -265,7 +261,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-app.js";
 import {
-  initializeFirestore, getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc, getDoc,
+  initializeFirestore, getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc,
   onSnapshot, writeBatch, deleteField, persistentLocalCache, persistentMultipleTabManager,
 } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-firestore.js";
 
@@ -284,24 +280,7 @@ const firebaseConfig = {
   appId: "1:527560231736:web:1fd93201d772c734eacfcd",
 };
 
-const NOT_CONFIGURED = firebaseConfig.apiKey.startsWith("BURAYA");
 const appEl = document.getElementById("app");
-
-if (NOT_CONFIGURED) {
-  appEl.innerHTML = `
-    <div class="setup-box">
-      <h2 style="margin-bottom:10px;">Firebase henüz bağlanmadı</h2>
-      <p class="muted">Uygulamanın çalışması için önce ücretsiz bir Firebase projesi kurup buraya bağlaman gerekiyor.</p>
-      <ol>
-        <li><a href="https://console.firebase.google.com" target="_blank" style="color:var(--mavi)">console.firebase.google.com</a>'da yeni proje oluştur</li>
-        <li>Sol menüden <b>Build → Firestore Database</b> aç, "test mode" ile başlat</li>
-        <li>Proje ayarları (⚙️) → <b>SDK setup and configuration</b>'dan config kodunu kopyala</li>
-        <li>Bu dosyada <code>firebaseConfig</code> nesnesindeki <code>BURAYA_...</code> alanlarını kendi değerlerinle değiştir</li>
-        <li>Dosyayı kaydedip yeniden aç</li>
-      </ol>
-    </div>`;
-  throw new Error("Firebase config not set");
-}
 
 const fbApp = initializeApp(firebaseConfig);
 
@@ -539,15 +518,16 @@ const state = {
 };
 
 function modalOpen() { return state.showNewDeck || state.showCardForm || state.showImport || state.showExport || state.showBackup; }
-let pendingRender = false;
-// Cevap animasyonu sürerken gelen onSnapshot render'ları ertelenir; yoksa DOM
-// baştan kurulur ve animasyon yarıda kesilir. Animasyon bitince tek render.
+// Cevap animasyonu sürerken gelen onSnapshot render'ları atlanır; yoksa DOM
+// baştan kurulur ve animasyon yarıda kesilir. Animasyon bitince advanceQueue
+// zaten güncel veriyle çizer. Açık modal da aynı sebeple (yazılan metin
+// kaybolmasın) çizilmez; kapanınca kapatan kod çizer.
 let animating = false;
 function maybeRender() {
-  if (animating) { pendingRender = true; return; }
+  if (animating) return;
   // Yedek modalında metin girişi yok; sayılar canlı kalsın diye yeniden çizilebilir.
   if (state.showBackup && !state.restoreBusy) { render(); return; }
-  if (modalOpen()) pendingRender = true; else render();
+  if (!modalOpen()) render();
 }
 
 // ---------- image resize ----------
@@ -625,7 +605,7 @@ function getProgress(cardId, user) {
   };
 }
 function getStats(user) {
-  return statsList.find((s) => s.id === user) || { streak: 0, lastStudyDate: null, totalReviewed: 0 };
+  return statsList.find((s) => s.id === user) || { totalReviewed: 0 };
 }
 function visibleCards(deckId, user) {
   return cards.filter((c) => c.deckId === deckId && (c.visibility === "both" || c.visibility === user));
@@ -783,7 +763,7 @@ async function createDeck() {
   if (!state.newDeckName.trim()) return;
   await addDoc(decksCol, { name: state.newDeckName.trim(), createdAt: Date.now() });
   state.newDeckName = ""; state.showNewDeck = false;
-  pendingRender = false; render();
+  render();
 }
 
 async function deleteDeck(deckId, deckName) {
@@ -819,7 +799,7 @@ async function saveCardForm() {
     } else {
       await addDoc(cardsCol, { ...payload, createdBy: state.currentUser, createdAt: Date.now() });
     }
-    state.showCardForm = false; pendingRender = false; render();
+    state.showCardForm = false; render();
   } catch (err) {
     console.error(err);
     alert("Kart kaydedilemedi: " + err.message + "\n\nİnternet bağlantını kontrol et ve tekrar dene.");
@@ -836,7 +816,7 @@ async function setBoxManually(cardId, box) {
   const streak = box >= MAX_BOX ? MASTER_STREAK : Math.max(0, box - 1);
   const card = cards.find((c) => c.id === cardId);
   await setDoc(doc(db, "progress", key), {
-    streak, box: boxFromStreak(streak), retired: cur.retired,
+    streak, retired: cur.retired,
     correctCount: cur.correctCount, wrongCount: cur.wrongCount,
     user, cardId, deckId: card ? card.deckId : state.activeDeckId, updatedAt: Date.now(),
   }, { merge: false });
@@ -865,7 +845,7 @@ async function setRetired(cardList, user, retired) {
     for (const c of cardList.slice(i, i + 400)) {
       const p = getProgress(c.id, user);
       batch.set(doc(db, "progress", progressKey(user, c.id)), {
-        streak: p.streak, box: boxFromStreak(p.streak), retired,
+        streak: p.streak, retired,
         correctCount: p.correctCount, wrongCount: p.wrongCount,
         user, cardId: c.id, deckId: c.deckId, updatedAt: Date.now(),
       }, { merge: false });
@@ -1006,7 +986,6 @@ async function applyImportBumps(parsed, existing, newCardIds) {
       if (writes.has(progKey)) continue;
       writes.set(progKey, {
         streak,
-        box: boxFromStreak(streak),
         retired: !!(cur && cur.retired),
         correctCount: (cur && cur.correctCount) || 0,
         wrongCount: (cur && cur.wrongCount) || 0,
@@ -1051,7 +1030,7 @@ async function runImport() {
   const bumped = await applyImportBumps(parsed, existing, newCardIds);
 
   state.showImport = false; state.importText = "";
-  pendingRender = false; render();
+  render();
 
   const parts = [];
   parts.push(fresh.length > 0 ? `${fresh.length} kart eklendi.` : "Yeni kart eklenmedi.");
@@ -1169,7 +1148,7 @@ async function runRestore() {
     state.restoreBusy = false;
     state.restorePreview = null;
     state.showBackup = false;
-    pendingRender = false; render();
+    render();
     alert(`Geri yükleme tamamlandı. ${total} kayıt geri yüklendi.`);
   } catch (err) {
     console.error(err);
@@ -1339,7 +1318,6 @@ function commitSessionStats() {
     const s = getStats(user);
     const fresh = s.todayDate === today;
     setDoc(doc(db, "stats", user), {
-      lastStudyDate: today,
       totalReviewed: (s.totalReviewed || 0) + d.reviewed,
       todayDate: today,
       todayCorrect: (fresh ? s.todayCorrect || 0 : 0) + d.correct,
@@ -1402,7 +1380,7 @@ function applyAnswer(card, result) {
 
     const streak = correct ? Math.min(MASTER_STREAK, cur.streak + 1) : 0;
     setDoc(doc(db, "progress", key), {
-      streak, box: boxFromStreak(streak), retired: cur.retired,
+      streak, retired: cur.retired,
       correctCount: cur.correctCount + (correct ? 1 : 0),
       wrongCount: cur.wrongCount + (correct ? 0 : 1),
       user, cardId: card.id, deckId: card.deckId, updatedAt: Date.now(),
@@ -1495,7 +1473,7 @@ const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-mo
 
 function playExit(dir, ok, fromSwipe, done) {
   const el = document.querySelector(".perspective");
-  const finish = () => { animating = false; pendingRender = false; done(); };
+  const finish = () => { animating = false; done(); };
   if (!el) { finish(); return; }
   el.classList.remove("glow-ok", "glow-no");
   el.classList.add(ok ? "glow-ok" : "glow-no");
@@ -1586,11 +1564,11 @@ function goToPreviousCard() {
 // var" gölgesi konur (CSS: .has-overflow).
 const FIT_STEPS = [21, 19, 17, 15, 13.5, 12];
 
-function fitOne(box, textEl, steps) {
+function fitOne(box, textEl) {
   if (!box || !textEl) return;
   const container = box.closest(".face") || box;
   container.classList.remove("has-overflow");
-  for (const size of steps) {
+  for (const size of FIT_STEPS) {
     textEl.style.fontSize = size + "px";
     // Yarım pikselik yuvarlama farkları yüzünden 1px tolerans bırakılıyor.
     if (box.scrollHeight <= box.clientHeight + 1) return;
@@ -1600,7 +1578,7 @@ function fitOne(box, textEl, steps) {
 
 function fitCardText() {
   document.querySelectorAll(".face-body").forEach((box) => {
-    fitOne(box, box.querySelector(".face-text"), FIT_STEPS);
+    fitOne(box, box.querySelector(".face-text"));
   });
 
 }
@@ -1782,9 +1760,9 @@ function renderDeck() {
       </div>
     ` : ""}
     <div id="card-list">
-      ${stageNew.length ? `<div class="stage-header" data-stage="new">Yeni <span class="count">· ${stageNew.length}</span></div>${stageNew.map(cardRow).join("")}` : ""}
-      ${stageLearning.length ? `<div class="stage-header" data-stage="learning">Öğreniliyor <span class="count">· ${stageLearning.length}</span></div>${stageLearning.map(cardRow).join("")}` : ""}
-      ${stageLearned.length ? `<div class="stage-header" data-stage="learned">Öğrenildi <span class="count">· ${stageLearned.length}</span></div>${stageLearned.map(cardRow).join("")}` : ""}
+      ${stageNew.length ? `<div class="stage-header">Yeni <span class="count">· ${stageNew.length}</span></div>${stageNew.map(cardRow).join("")}` : ""}
+      ${stageLearning.length ? `<div class="stage-header">Öğreniliyor <span class="count">· ${stageLearning.length}</span></div>${stageLearning.map(cardRow).join("")}` : ""}
+      ${stageLearned.length ? `<div class="stage-header">Öğrenildi <span class="count">· ${stageLearned.length}</span></div>${stageLearned.map(cardRow).join("")}` : ""}
     </div>`;
 }
 
@@ -1912,7 +1890,6 @@ function renderStudy() {
 function renderSummary() {
   const total = state.sessionCorrect + state.sessionWrong;
   const pct = total ? Math.round((state.sessionCorrect / total) * 100) : 0;
-  const s = getStats(state.currentUser);
   return `
     <div style="text-align:center;padding-top:30px;">
       <div class="summary-icon">🔥</div>

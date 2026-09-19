@@ -25,7 +25,8 @@ mevcut kayıtları sahipsiz bırakır ve ayrıca bir taşıma gerektirir:
 - `firebaseConfig` — başka projeye bağlar
 - `USERS` dizisindeki isimler — `progress` ve `stats` id'leri isme bağlı
 - Koleksiyon adları veya `progressKey()` şeması
-- Alan adları: `front`, `back`, `deckId`, `visibility`, `box`, `nextReview`
+- Alan adları: `front`, `back`, `deckId`, `visibility`, `streak`, `retired`
+  (eski kayıtlardaki `box` alanı yalnızca `streak` yoksa okunur; artık yazılmaz)
 
 ## Kart metni
 
