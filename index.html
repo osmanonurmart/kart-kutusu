@@ -902,18 +902,35 @@ function stripLevels(parts) {
   return { rest, bumps };
 }
 
+// Ayırıcı "¦" (kesik dikey çizgi): kartları Claude yazdığı için klavyede
+// yazılabilir olması gerekmiyor; önemli olan metinde hiç geçmemesi. Tire
+// "e-posta" gibi kelimelerde satırı yanlış yerden bölüyordu. Normal "|"
+// kullanılmıyor çünkü Claude onu görünce Markdown tablosuna çevirebiliyor.
+const IMPORT_SEP = "¦";
+const IMPORT_SEP_RE = /\s*¦\s*/;
+
+// Dönüş: { pairs, skipped } — skipped, boş olmayan ama karta çevrilemeyen
+// satır sayısıdır (ayırıcı unutulmuş vb.).
 function parseImportText(text) {
   const lines = text.split("\n");
   const pairs = [];
+  let skipped = 0;
   for (const raw of lines) {
     const line = raw.replace(/\r$/, "");
     if (!line.trim()) continue;
+    // Claude'dan kopyalanan kod bloğunun ``` satırları sessizce atlanır.
+    if (/^\s*```/.test(line)) continue;
 
     let front, back, bumps = [];
     if (line.includes("\t")) {
       const stripped = stripLevels(line.split("\t"));
       bumps = stripped.bumps;
       front = stripped.rest[0]; back = stripped.rest.slice(1).join(" ");
+    } else if (line.includes(IMPORT_SEP)) {
+      // İlk ayırıcıdan bölünür; seviyeler (1.2+) yalnızca sondan soyulur.
+      const stripped = stripLevels(line.split(IMPORT_SEP_RE));
+      bumps = stripped.bumps;
+      front = stripped.rest[0]; back = stripped.rest.slice(1).join(` ${IMPORT_SEP} `);
     } else if (line.includes(" - ")) {
       // Ön/arka yüz İLK ayırıcıdan bölünmeye devam ediyor (kart metninde
       // tire olabilir); seviyeler yalnızca sondan soyuluyor.
@@ -921,18 +938,34 @@ function parseImportText(text) {
       bumps = stripped.bumps;
       const remainder = stripped.rest.join(" - ");
       const idx = remainder.indexOf(" - ");
-      if (idx === -1) continue;
+      if (idx === -1) { skipped++; continue; }
       front = remainder.slice(0, idx); back = remainder.slice(idx + 3);
     } else if (line.includes("-")) {
       const idx = line.indexOf("-");
       front = line.slice(0, idx); back = line.slice(idx + 1);
-    } else continue;
+    } else { skipped++; continue; }
 
     front = unescapeCell((front || "").trim()); back = unescapeCell((back || "").trim());
     if (front && back) pairs.push({ front, back, bumps });
+    else skipped++;
   }
-  return pairs;
+  return { pairs, skipped };
 }
+
+// Claude'a yapıştırılacak biçim tarifi (içe aktarma penceresindeki 📋 düğmesi).
+const AI_IMPORT_PROMPT = `Kart Kutusu uygulamasına içe aktarılacak çalışma kartları hazırla. Biçim kuralları:
+- Her satıra tam olarak bir kart yaz: soru ${IMPORT_SEP} cevap
+- Soru ile cevabı yalnızca "${IMPORT_SEP}" (kesik dikey çizgi) simgesiyle ayır; bu simgeyi başka hiçbir yerde kullanma. Normal "|" kullanma.
+- Kart her zaman tek satırda kalmalı. Kartın içinde alt satıra geçmek gerekirse gerçek satır sonu yerine \\n yaz.
+- Madde listesi için satırı "- " ile, numaralı liste için "1. " ile başlat; bunlar da \\n ile ayrılır.
+- Başlık, tablo, numaralandırma ya da açıklama ekleme. Kart satırlarının hepsini tek bir kod bloğu içinde ver.
+
+Örnek:
+elma ${IMPORT_SEP} apple
+e-posta ${IMPORT_SEP} email
+Türkiye'nin başkenti ${IMPORT_SEP} Ankara\\n- 1923'ten beri başkent
+
+Kartların konusu: `;
 // Dışa/içe aktarma satır bazlı çalışır; kart metnindeki alt satırlar bu yüzden
 // tek satıra "\n" olarak yazılır ve içe aktarırken geri açılır.
 function escapeCell(text) {
@@ -1006,7 +1039,7 @@ async function applyImportBumps(parsed, existing, newCardIds) {
 }
 
 async function runImport() {
-  const parsed = parseImportText(state.importText);
+  const { pairs: parsed } = parseImportText(state.importText);
   if (parsed.length === 0) return;
 
   const { fresh, duplicates, existing } = summarizeImport(parsed);
@@ -1994,7 +2027,7 @@ function renderCardFormModal() {
 }
 
 function renderImportModal() {
-  const parsed = parseImportText(state.importText);
+  const { pairs: parsed, skipped } = parseImportText(state.importText);
   const { fresh, duplicates, bumpCount } = summarizeImport(parsed);
   return `
     <div class="modal-overlay" id="overlay-import">
@@ -2002,14 +2035,18 @@ function renderImportModal() {
         <div class="modal-body">
           <div class="modal-head"><h2 style="font-size:18px;">İçe aktar</h2><button id="close-import" class="muted" style="background:none;">✕</button></div>
           <p class="muted" style="font-size:12.5px;margin-bottom:10px;line-height:1.5;">
-            Her satıra bir kart: <b>Ön - Arka</b>. Excel'den iki sütun da yapıştırabilirsin.<br>
-            Satır sonuna seviye yazabilirsin: <code>Elma - Apple - 1.2 - 2.4</code>
+            Her satıra bir kart: <b>Ön ${IMPORT_SEP} Arka</b> (eski <b>Ön - Arka</b> biçimi de olur).
+            Excel'den iki sütun da yapıştırabilirsin.<br>
+            Satır sonuna seviye yazabilirsin: <code>Elma ${IMPORT_SEP} Apple ${IMPORT_SEP} 1.2 ${IMPORT_SEP} 2.4</code>
             (${USERS.map((u, i) => `${i + 1}=${esc(u)}`).join(", ")}).
             Seviyenin sonundaki <code>+</code> o kullanıcının kutusunu bir artırır.
           </p>
-          <textarea id="input-import" rows="8" placeholder="Elma - Apple&#10;Armut - Pear - 1.3+ - 2.1" style="margin-bottom:0;">${esc(state.importText)}</textarea>
+          <div class="rt-toolbar" style="margin:0 0 10px;">
+            <button type="button" class="rt-btn" id="btn-copy-ai-prompt" title="Biçim tarifini panoya kopyalar; Claude'a yapıştır ve konuyu yaz">📋 Claude için talimat</button>
+          </div>
+          <textarea id="input-import" rows="8" placeholder="Elma ${IMPORT_SEP} Apple&#10;Armut ${IMPORT_SEP} Pear ${IMPORT_SEP} 1.3+ ${IMPORT_SEP} 2.1" style="margin-bottom:0;">${esc(state.importText)}</textarea>
           <p class="import-count">
-            ${fresh.length} yeni kart${duplicates > 0 ? ` · ${duplicates} zaten var` : ""}${bumpCount > 0 ? ` · ${bumpCount} seviye artışı` : ""}
+            ${fresh.length} yeni kart${duplicates > 0 ? ` · ${duplicates} zaten var` : ""}${bumpCount > 0 ? ` · ${bumpCount} seviye artışı` : ""}${skipped > 0 ? ` · <span style="color:var(--kirmizi);">${skipped} satır anlaşılamadı</span>` : ""}
           </p>
         </div>
         <div class="modal-footer">
@@ -2286,6 +2323,19 @@ function bindEvents() {
   if (inputImport) { inputImport.focus(); inputImport.oninput = (e) => { state.importText = e.target.value; render(); }; }
   const btnRunImport = document.getElementById("btn-run-import");
   if (btnRunImport) btnRunImport.onclick = runImport;
+  const btnCopyAiPrompt = document.getElementById("btn-copy-ai-prompt");
+  if (btnCopyAiPrompt) btnCopyAiPrompt.onclick = async () => {
+    const prev = btnCopyAiPrompt.textContent;
+    try {
+      await navigator.clipboard.writeText(AI_IMPORT_PROMPT);
+    } catch (err) {
+      const ta = document.createElement("textarea");
+      ta.value = AI_IMPORT_PROMPT; document.body.appendChild(ta); ta.select();
+      document.execCommand("copy"); ta.remove();
+    }
+    btnCopyAiPrompt.textContent = "✓ Kopyalandı — Claude'a yapıştır";
+    setTimeout(() => { btnCopyAiPrompt.textContent = prev; }, 1800);
+  };
 
   const overlayExport = document.getElementById("overlay-export");
   if (overlayExport) overlayExport.onclick = (e) => { if (e.target === overlayExport) { state.showExport = false; render(); } };

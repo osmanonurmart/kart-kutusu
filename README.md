@@ -47,6 +47,28 @@ soluklaşma gösterilir.
 
 ## Dışa / içe aktarma ve seviyeler
 
+İçe aktarmada her satır bir karttır. Ön ve arka yüz şu sırayla aranan ilk
+ayırıcıdan bölünür: **Tab** (Excel'den iki sütun) → **`¦`** → ` - ` → `-`.
+
+```
+elma ¦ apple
+e-posta ¦ email
+başkent ¦ Ankara
+- 1923'ten beri
+```
+
+`¦` (kesik dikey çizgi) kartları Claude'a yazdırmak için seçildi: klavyede
+yazılması gerekmiyor, önemli olan metinde hiç geçmemesi. Tire, `e-posta` gibi
+kelimelerde satırı yanlış yerden bölüyordu. Normal `|` kullanılmıyor, çünkü
+Claude onu görünce Markdown tablosuna çevirebiliyor.
+
+İçe aktarma penceresindeki **📋 Claude için talimat** düğmesi biçim tarifini
+panoya kopyalar; Claude'a yapıştırıp konuyu yazman yeterli. Claude'un kod
+bloğu satırları (```` ``` ````) otomatik atlanır. Ayırıcısı olmayan satırlar
+sayaçta kırmızı "N satır anlaşılamadı" olarak görünür.
+
+Dışa aktarma şimdilik ` - ` ile yazar; içe aktarma iki biçimi de okur.
+
 Bir destede **⇩ Dışa aktar** her satırın sonuna iki kullanıcının kutu
 seviyesini de yazar:
 
