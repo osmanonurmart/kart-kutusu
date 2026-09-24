@@ -202,6 +202,25 @@ Ayrılan kartlar ana ekranda `<deste> · Ustalaşılanlar` olarak görünür ve
 1–5 kutu ölçeği yalnızca görsel bir göstergedir ve `streak`'ten türetilir:
 0→1, 1→2, 2→3, 3–4→4, 5→5.
 
+## Çoktan seçmeli
+
+Deste ve görev ekranındaki **≡ Çoktan seçmeli / 🔄 Klasik kart** anahtarı
+(cihazda hatırlanır, varsayılan açık) çalışma ekranında kartı çevirmek
+yerine dört şık gösterir. Doğru şık kartın arka yüzü, diğer üçü aynı
+destedeki başka kartların arka yüzleridir.
+
+- Şıklar kart başına bir kez üretilir, yeniden çizimde karışmaz.
+- Şıkka dokununca kart arka yüzüne döner: doğru yeşil, seçilen yanlış
+  kırmızı olur. Doğruysa ~0,6 sn sonra kendiliğinden geçer, **yanlışsa
+  cevabı okumak için dokunmayı (ya da Enter) bekler**.
+- Klavye: `1`–`4` şık seçer, `Boşluk`/`Enter` cevaptan sonra devam ettirir.
+  Cevaplanmadan kart çevrilemez ve kaydırarak cevaplanamaz.
+- Cevap normal cevap gibi işlenir: `streak`, kutu, günlük sayaç, günlük görev.
+
+Şu üç durumda kart klasik olarak çevrilir: **birlikte** modda (bir şık iki
+kişinin ayrı sonucunu anlatamaz), cevabı 80 karakterden uzun kartlarda ve
+destede yeterli sayıda farklı cevap yoksa (en az 4 kart gerekir).
+
 ## Günlük görev (🎯)
 
 Ana ekranda "Kart Kutusu" yazısının yanındaki `🎯 N` düğmesi, sınava kadar

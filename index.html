@@ -286,6 +286,21 @@
     .toast, .toast.leaving, .dialog-overlay, .dialog { animation:none; }
   }
 
+  /* ---- Çoktan seçmeli ---- */
+  /* Çoktan seçmelide kart çevrilmediği için alçalır; şıklar ve alttaki
+     düğmeler telefonda ekrana sığsın. */
+  .perspective.compact { height:clamp(140px, 26dvh, 240px); }
+  .choice-list { display:flex; flex-direction:column; gap:8px; margin-bottom:10px; }
+  .choice-btn { width:100%; display:flex; align-items:flex-start; gap:10px; text-align:left; background:var(--panel); border:1.5px solid var(--line); color:var(--metin); border-radius:var(--r-kucuk); padding:12px 14px; font-size:14px; line-height:1.4; }
+  .choice-btn .key { font-size:12px; color:var(--sonuk); margin-top:1px; flex-shrink:0; }
+  .choice-btn.correct { background:var(--yesil-yumusak); border-color:var(--yesil); color:var(--yesil); }
+  .choice-btn.correct .key { color:var(--yesil); }
+  .choice-btn.wrong { background:var(--kirmizi-yumusak); border-color:var(--kirmizi); color:var(--kirmizi); }
+  .choice-btn.wrong .key { color:var(--kirmizi); }
+  /* Cevaplandıktan sonra şıklar pasif ama okunur kalmalı. */
+  .choice-btn:disabled { opacity:1; cursor:default; }
+  .choice-note { font-size:11.5px; color:var(--sonuk); margin:-10px 0 14px; line-height:1.45; }
+
   /* ---- Günlük görev ---- */
   .goal-btn { display:flex; align-items:center; gap:6px; flex-shrink:0; padding:7px 11px; border-radius:999px; background:var(--mavi-yumusak); border:1.5px solid var(--mavi); color:var(--mavi); font-size:14px; font-weight:700; }
   .goal-btn .num { font-family:'IBM Plex Mono',monospace; }
@@ -550,6 +565,11 @@ const state = {
   // Birlikte mi çalışılıyor: açıkken bir cevap iki kişinin kaydını da
   // günceller, kapalıyken yalnızca ekranda seçili kişiyi.
   together: localStorage.getItem("flashcard-together") !== "0",
+  // Çoktan seçmeli: kart çevrilecek yerde 4 şık gösterilir. Yalnızca iki
+  // düğmeli (tek başına) modda; birlikte modda "kim bildi" sorusu şıkla
+  // ifade edilemediği için kapalıdır.
+  choiceMode: localStorage.getItem("flashcard-choice") !== "0",
+  choices: null,          // { cardId, options, correctIndex, picked }
   // Günlük sayaçlar seans boyunca burada birikir, çalışmadan çıkınca yazılır.
   pendingDaily: {},
   viewRetired: false,     // deste ekranı ustalaşılanlar listesini mi gösteriyor
@@ -724,6 +744,63 @@ function confirmDialog({ title, html, confirmText = "Tamam", tone = "primary" })
 function shortCardText(text, max = 60) {
   const t = plainCardText(text);
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
+}
+
+// =========================================================================
+// ÇOKTAN SEÇMELİ
+// Doğru şık kartın arka yüzü, diğer üçü aynı destedeki başka kartların arka
+// yüzleridir. Şıklar kart başına bir kez üretilir (yeniden çizimde
+// karışmasın diye state.choices'ta tutulur).
+// =========================================================================
+const CHOICE_COUNT = 4;
+// Uzun cevaplar şık olarak okunamaz; o kartlar klasik çevrilir.
+const CHOICE_MAX_LEN = 80;
+
+function choiceKey(text) { return plainCardText(text).toLocaleLowerCase("tr"); }
+
+function buildChoices(card) {
+  if (!state.choiceMode || !card || togetherMode(card)) return null;
+  const correct = plainCardText(card.back);
+  if (!correct || correct.length > CHOICE_MAX_LEN) return null;
+
+  // Aynı metne sahip kartlar ikinci kez şık olmaz.
+  const seen = new Set([choiceKey(card.back)]);
+  const pool = [];
+  for (const c of visibleCards(card.deckId, state.currentUser)) {
+    if (c.id === card.id) continue;
+    const text = plainCardText(c.back);
+    if (!text || text.length > CHOICE_MAX_LEN) continue;
+    const key = choiceKey(c.back);
+    if (seen.has(key)) continue;
+    seen.add(key); pool.push(text);
+  }
+  if (pool.length < CHOICE_COUNT - 1) return null;   // yeterli yanlış şık yok
+
+  const options = shuffled([...shuffled(pool).slice(0, CHOICE_COUNT - 1), correct]);
+  return { cardId: card.id, options, correctIndex: options.indexOf(correct), picked: null };
+}
+
+function ensureChoices(card) {
+  if (!card) { state.choices = null; return null; }
+  if (state.choices && state.choices.cardId === card.id) return state.choices;
+  state.choices = buildChoices(card);
+  return state.choices;
+}
+// Şıkka dokunulunca: renkler yerleşir ve kart arka yüzüne döner (cevabın
+// tam hâli, listeler ve görsel görünsün). Doğruysa kısa bir bekleyişle
+// geçilir, yanlışsa cevabı okumak için dokunmayı bekler.
+function pickChoice(index) {
+  const ch = state.choices;
+  if (!ch || ch.picked !== null || animating) return;
+  ch.picked = index;
+  state.flipped = true;
+  render();
+  if (index === ch.correctIndex) setTimeout(continueChoice, 600);
+}
+function continueChoice() {
+  const ch = state.choices;
+  if (!ch || ch.picked === null || animating) return;
+  handleAnswer(ch.picked === ch.correctIndex ? "solo1" : "solo0");
 }
 
 // ---------- klavye ----------
@@ -1642,7 +1719,7 @@ function beginStudy(scope, rot) {
   state.sessionCorrect = 0; state.sessionWrong = 0;
   state.lastAction = null;
   state.requeueCurrent = false; state.passToast = false;
-  state.shownCardId = null;
+  state.shownCardId = null; state.choices = null;
   state.view = "study"; render();
 }
 
@@ -1886,6 +1963,7 @@ function undoLastAction() {
   const mine = a.daily.find((d) => d.user === state.currentUser);
   if (mine) { if (mine.correct) state.sessionCorrect--; else state.sessionWrong--; }
   state.flipped = false;
+  state.choices = null;
   state.lastAction = null;
   render();
 }
@@ -1965,12 +2043,15 @@ const SWIPE_THRESHOLD = 90;
 function bindSwipe(flipEl) {
   const wrap = flipEl.closest(".perspective");
   const card = state.queue[state.qIndex];
-  const enabled = !!wrap && state.flipped && !!card && !togetherMode(card);
+  const enabled = !!wrap && state.flipped && !!card && !togetherMode(card) && !state.choices;
   let pointerId = null, startX = 0, startY = 0, dx = 0, dragging = false, moved = false;
 
   flipEl.onclick = () => {
     if (moved) { moved = false; return; }   // sürüklemenin ardından gelen tıklamayı yut
     if (animating) return;
+    // Çoktan seçmelide kart cevaptan önce çevrilemez; cevaptan sonra dokunmak
+    // sıradakine geçirir.
+    if (state.choices) { if (state.choices.picked !== null) continueChoice(); return; }
     state.flipped = !state.flipped; render();
   };
   if (!enabled) return;
@@ -2157,6 +2238,18 @@ function renderHome() {
 // Aynı ekran iki şeyi gösterir: destenin kendisi ve (state.viewRetired ise)
 // o desteden ayrılmış "ustalaşılanlar" listesi. İkisi de kendi sırasıyla
 // çalışılabilir, bu yüzden ortak bir ekran kullanmak en az tekrar eden yol.
+// Çoktan seçmeli anahtarı; birlikte modda çalışmadığı için o sırada uyarır.
+function renderChoiceToggle() {
+  return `
+      <div class="visibility-toggle">
+        <button type="button" class="vis-pill ${state.choiceMode ? "active" : ""}" data-set-choice="1">≡ Çoktan seçmeli</button>
+        <button type="button" class="vis-pill ${state.choiceMode ? "" : "active"}" data-set-choice="0">🔄 Klasik kart</button>
+      </div>
+      ${state.choiceMode && state.together && USERS.length === 2
+        ? `<p class="choice-note">Çoktan seçmeli yalnızca <b>tek başıma</b> modda çıkar.</p>`
+        : `<p class="choice-note">Şıklar aynı destedeki kartlardan üretilir. Cevabı uzun olan kartlar klasik çevrilir.</p>`}`;
+}
+
 function renderDeck() {
   const deck = decks.find((d) => d.id === state.activeDeckId);
   if (!deck) return `<div class="empty-state">Deste bulunamadı.</div>`;
@@ -2199,6 +2292,7 @@ function renderDeck() {
 
   const studyBlock = dc.length > 0 ? `
       ${modeToggle}
+      ${renderChoiceToggle()}
       <button class="btn btn-primary" id="btn-study" style="margin-bottom:14px;">▶ Çalışmaya başla</button>
     ` : "";
 
@@ -2308,6 +2402,7 @@ function applyCardSearch() {
 function renderStudy() {
   const card = state.queue[state.qIndex];
   if (!card) return `<div class="empty-state">Kart bulunamadı.</div>`;
+  const choices = ensureChoices(card);
   const pct = (state.qIndex / state.queue.length) * 100;
   const header = `
     <div class="top-row" style="margin-bottom:6px;">
@@ -2328,7 +2423,7 @@ function renderStudy() {
   const together = togetherMode(card);
   return `
     ${header}
-    <div class="perspective">
+    <div class="perspective${choices ? " compact" : ""}">
       <div class="flip-inner ${state.flipped ? "flipped" : ""}" id="flip-card">
         <div class="face front">
           <span class="face-label">SORU</span>
@@ -2343,7 +2438,23 @@ function renderStudy() {
         </div>
       </div>
     </div>
-    ${!state.flipped
+    ${choices
+      ? `<div class="choice-list">
+          ${choices.options.map((text, i) => {
+            const cls = choices.picked === null ? ""
+              : i === choices.correctIndex ? " correct"
+              : i === choices.picked ? " wrong" : "";
+            return `<button class="choice-btn${cls}" data-choice="${i}" ${choices.picked === null ? "" : "disabled"}>
+              <span class="key mono">${i + 1}</span><span>${esc(text)}</span>
+            </button>`;
+          }).join("")}
+        </div>
+        ${choices.picked === null
+          ? `<p class="hint">Doğru cevabı seç${hasKeyboard ? " · <b>1–4</b>" : ""}</p>`
+          : choices.picked === choices.correctIndex
+            ? `<p class="hint" style="color:var(--yesil);">✓ Doğru</p>`
+            : `<button class="btn btn-primary" id="btn-choice-next" style="margin-bottom:10px;">Devam ›</button>`}`
+      : !state.flipped
       ? `<p class="hint">Kartı çevirmek için dokun${keyboardHint()}</p>`
       : together
         // Düğmelerin yeri USERS sırasına sabit; kim çalışırsa çalışsın değişmez.
@@ -2409,7 +2520,7 @@ function renderDaily() {
       : info.needMin ? `<div class="daily-note warn">Bu süreyle sınava kadar kartların hepsini bir kez bile göremezsin. Tümünü en az bir kez görmek için günde en az <b>${info.needMin} dk</b> gerekiyor.</div>`
       : `<div class="daily-note ok">Bu tempoyla sınava kadar her kart yaklaşık <b>${projected} kez</b> tekrar edilir.</div>`}
 
-    ${finished ? "" : `${modeToggle}<button class="btn btn-primary" id="btn-daily-start">▶ ${doneCount ? "Devam et" : "Göreve başla"} · ${remaining.length} kart</button>`}
+    ${finished ? "" : `${modeToggle}${renderChoiceToggle()}<button class="btn btn-primary" id="btn-daily-start">▶ ${doneCount ? "Devam et" : "Göreve başla"} · ${remaining.length} kart</button>`}
 
     <div class="daily-settings">
       <label class="field-label">Günlük süre</label>
@@ -2693,6 +2804,18 @@ function bindEvents() {
 
   const btnStudy = document.getElementById("btn-study");
   if (btnStudy) btnStudy.onclick = () => startStudy();
+  document.querySelectorAll("[data-set-choice]").forEach((el) => {
+    el.onclick = () => {
+      state.choiceMode = el.dataset.setChoice === "1";
+      localStorage.setItem("flashcard-choice", state.choiceMode ? "1" : "0");
+      render();
+    };
+  });
+  document.querySelectorAll("[data-choice]").forEach((el) => {
+    el.onclick = () => pickChoice(Number(el.dataset.choice));
+  });
+  const btnChoiceNext = document.getElementById("btn-choice-next");
+  if (btnChoiceNext) btnChoiceNext.onclick = continueChoice;
   document.querySelectorAll("[data-set-together]").forEach((el) => {
     el.onclick = () => {
       state.together = el.dataset.setTogether === "1";
@@ -2942,13 +3065,22 @@ document.addEventListener("keydown", (e) => {
   const card = state.queue[state.qIndex];
   if (!card) return;
 
+  // Çoktan seçmeli: 1–4 şık seçer, Boşluk/Enter cevaptan sonra devam ettirir.
+  if (state.choices) {
+    if (state.choices.picked === null) {
+      const i = Number(e.key) - 1;
+      if (i >= 0 && i < state.choices.options.length) { e.preventDefault(); pickChoice(i); return; }
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); return; }
+    } else if (e.key === " " || e.key === "Enter") { e.preventDefault(); continueChoice(); return; }
+  }
+
   if (e.key === " " || e.key === "Enter") {
     e.preventDefault();
     state.flipped = !state.flipped; render();
     return;
   }
   // Kısayolların sırası ekrandaki düğmelerle aynı.
-  if (state.flipped) {
+  if (state.flipped && !state.choices) {
     const codes = togetherMode(card) ? { "1": "10", "2": "01", "3": "11", "4": "00" } : { "1": "solo0", "2": "solo1" };
     if (codes[e.key]) { e.preventDefault(); handleAnswer(codes[e.key]); return; }
   }
